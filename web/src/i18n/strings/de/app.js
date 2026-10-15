@@ -144,6 +144,17 @@ export default {
     replies: { one: '{n} Antwort', other: '{n} Antworten' },
     confirm: 'Veröffentlichen',
   },
+  noProject: {
+    title: 'Kein Projekt ausgewählt',
+    hint: 'Wähle oben in der Auswahl eines aus oder verwalte deine Projekte.',
+    manage: 'Projekte verwalten',
+    import: 'Projekt importieren',
+  },
+  removeProject: {
+    title: '{project} vom Board entfernen?',
+    text: 'Chats, Aufgaben und Daten des Projekts bleiben erhalten und kommen beim erneuten Import zurück. Es wird nur aus der Projektliste entfernt.',
+    confirm: 'Entfernen',
+  },
   side: {
     resize: 'Ziehen, um die Breite zu ändern',
     closePanel: 'Panel schließen',

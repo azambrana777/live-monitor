@@ -38,6 +38,7 @@
   --project-soft: #2f1932;
   --project-border: #733b7c;
   --side-width: min(620px, 46vw);
+  --tb-h: 52px;               /* the top bar; the side panel starts below it */
 
   /* ---- type (existing names; the scale moves up one notch) ---- */
   --fs-xs: 12px;

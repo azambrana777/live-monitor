@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { meta, modeMeta, BUSY_STATES, moveStepLabel, phaseLabel, latestPhaseModel } from '../status.js';
 import Icon from './Icon.jsx';
 import { cardId } from '../taskKey.js';
@@ -144,6 +144,10 @@ function ChangeBaseControl({ task, onChangeBase }) {
   );
 }
 
+// Pointer rest before a card lengthens by itself, and grace before it shortens again.
+const HOVER_OPEN_MS = 1000;
+const HOVER_LEAVE_MS = 150;
+
 export default function TaskCard({
   task, compact, parsed, inflightKeys, onChat, onDemo, onLog, onTimeline, onReady, onReviewer, onRetry, onBootstrapRepo, onChangeBase, onDeleteWorktree,
   onCreateWorktree, onStartStack, onStopStack, onStart, onToggleManual,
@@ -153,7 +157,9 @@ export default function TaskCard({
   onMove, onRetryMove, onDiscardMove, onDeletePlace,
   quota = null, quotaNow = null, onRenewLogin = null, onOpenSettings = null,
 }) {
-  const t = useStrings().board.card;
+  const strs = useStrings();
+  const t = strs.board.card;
+  const worktreeDelete = strs.card.danger.worktreeDelete;
   const info = meta(task.state);
   const busy = BUSY_STATES.includes(task.state);
   const phaseModel = latestPhaseModel(task);
@@ -199,7 +205,50 @@ export default function TaskCard({
   const [selectedPrNumber, setSelectedPrNumber] = useState(prList[0]?.number ?? null);
   // Lengthened in place, inside its own column: the extra controls are the
   // `tc-groups` below the body, never a second copy of it.
+  // Two ways open: a click PINS it (stays until the button shortens it); resting
+  // the pointer on the card for HOVER_OPEN_MS opens it only while it is over it.
   const [expanded, setExpanded] = useState(false);
+  const pinned = useRef(false);
+  // Set when the user collapses with the button: the pointer is still over the
+  // card, so hover must not re-open it until the pointer leaves.
+  const suppressHover = useRef(false);
+  const hoverTimer = useRef(null);
+  const leaveTimer = useRef(null);
+  const expandedRef = useRef(false);
+  expandedRef.current = expanded;
+  const clearTimers = () => {
+    clearTimeout(hoverTimer.current);
+    clearTimeout(leaveTimer.current);
+    hoverTimer.current = null;
+    leaveTimer.current = null;
+  };
+  useEffect(() => clearTimers, []);
+  const armHover = (e) => {
+    clearTimeout(leaveTimer.current);
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+    if (e.pointerType !== 'mouse' || suppressHover.current) return;
+    if (expandedRef.current || e.buttons !== 0) return;
+    hoverTimer.current = setTimeout(() => {
+      hoverTimer.current = null;
+      if (!expandedRef.current) setExpanded(true);
+    }, HOVER_OPEN_MS);
+  };
+  const onCardLeave = () => {
+    suppressHover.current = false;
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+    if (!expandedRef.current || pinned.current) return;
+    clearTimeout(leaveTimer.current);
+    leaveTimer.current = setTimeout(() => {
+      leaveTimer.current = null;
+      if (!pinned.current) setExpanded(false);
+    }, HOVER_LEAVE_MS);
+  };
+  const toggleExpanded = () => {
+    clearTimers();
+    if (expandedRef.current) { pinned.current = false; suppressHover.current = true; setExpanded(false); } else { pinned.current = true; setExpanded(true); }
+  };
   useEffect(() => {
     setSelectedPrNumber(prList[0]?.number ?? null);
   }, [prList[0]?.number]);
@@ -312,6 +361,9 @@ export default function TaskCard({
     onDiscardMove, onDeletePlace, onRenewLogin, onOpenSettings,
   };
 
+  // A finished card (the «Completadas» strip, or any `done` task) keeps its
+  // worktree delete in reach while shortened; same gate as the Danger group.
+  const canTrash = (compact || task.state === 'done') && task.hasWorktree && !busy;
   const cid = cardId(task.project, task.issue);
   // The compact card of the «Completadas» strip stays short until lengthened.
   const rich = !compact || expanded;
@@ -329,7 +381,7 @@ export default function TaskCard({
     task.state === 'error' && 'tc-error', busy && 'tc-live'].filter(Boolean).join(' ');
 
   return (
-    <article id={cid} className={cls}>
+    <article id={cid} className={cls} onPointerEnter={armHover} onPointerMove={armHover} onPointerLeave={onCardLeave}>
       <div className="tc-head">
         <a className="tc-issue" href={task.url} target="_blank" rel="noreferrer" title={t.openIssue}>{highlightNumberRange(String(task.issue), task, parsed) ? <mark className="hit">#{task.issue}</mark> : `#${task.issue}`}</a>
         {movingLive ? (
@@ -354,7 +406,7 @@ export default function TaskCard({
           <Pill tone={pillTone} live={busy} icon={info.icon}>{info.label}{askDot}</Pill>
         )}
         <span className="tc-spacer" />
-        <ExpandButton expanded={expanded} onToggle={() => setExpanded((v) => !v)} controls={`${cid}-controls`} />
+        <ExpandButton expanded={expanded} onToggle={toggleExpanded} controls={`${cid}-controls`} />
       </div>
 
       <p className="tc-title"><Highlighted text={task.title} parsed={parsed} /></p>
@@ -593,6 +645,13 @@ export default function TaskCard({
                   <PlanButton task={task} m={m} h={h} />
                 </>
               )}
+          {canTrash && (
+            <button type="button" className="btn btn-icon btn-danger tc-foot-trash" title={worktreeDelete}
+              aria-label={worktreeDelete}
+              onClick={(e) => { e.stopPropagation(); h.onDeleteWorktree(task.issue); }}>
+              <Icon name="trash" />
+            </button>
+          )}
         </footer>
       )}
     </article>

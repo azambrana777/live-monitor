@@ -144,6 +144,17 @@ export default {
     replies: { one: '{n} reply', other: '{n} replies' },
     confirm: 'Publish',
   },
+  noProject: {
+    title: 'No project selected',
+    hint: 'Pick one in the selector above or manage your projects.',
+    manage: 'Manage projects',
+    import: 'Import project',
+  },
+  removeProject: {
+    title: 'Remove {project} from the board?',
+    text: 'The chats, tasks and data of the project are kept and come back when you import it again. It is only removed from the project list.',
+    confirm: 'Remove',
+  },
   side: {
     resize: 'Drag to change the width',
     closePanel: 'Close the panel',

@@ -31,7 +31,9 @@ body {
 /* ---------- side column: chat on top, demo/log below ---------- */
 
 .side {
-  position: fixed; top: 0; right: 0; bottom: 0;
+  /* Below the top bar, not over it: flush with the viewport top and above it in z-order, it covered the bar's
+     right end (the "More actions" button). */
+  position: fixed; top: var(--tb-h); right: 0; bottom: 0;
   width: var(--side-width);
   background: var(--col);
   border-left: 1px solid var(--card-border);
@@ -111,7 +113,7 @@ body {
   .app.with-side .board-wrap { padding-right: 0; }
   /* A pantalla completa es la forma correcta de un panel *abierto* en 390 px:
      lo que fallaba era poder colapsarlo aquí. */
-  .side { width: 100%; }
+  .side { width: 100%; top: 0; }
   .subpanel-chat { flex: 1 1 100%; }
   /* Un dedo, no un cursor: la agarradera se hace alta y ancha. */
   .composer-grip { top: -10px; height: 18px; width: 56px; }

@@ -24,7 +24,10 @@ const shortPoll = (poll) => poll.short ?? poll.text.replace(/^[^:\d]*:\s*/, '');
  * @param {object[]} props.projects
  * @param {string|null} props.activeProject
  * @param {(id: string) => void} props.onSelectProject
- * @param {(project: object) => void} props.onImported
+ * @param {(project: object) => void} props.onImported kept for callers; the import dialog lives in MoreMenu
+ * @param {(id: string, restricted: boolean) => void} [props.onToggleRestricted] restrict or unrestrict a project
+ * @param {(project: object) => void} [props.onRemoveProject] take a project off the board (the caller confirms)
+ * @param {() => void} [props.onManageProjects] open the manage-projects dialog
  * @param {string|null} props.fallbackRepo label used while the registry holds a single project
  * @param {object} props.settingsMenu props of `SettingsMenu`
  * @param {object} props.moreMenu props of `MoreMenu`
@@ -40,7 +43,7 @@ const shortPoll = (poll) => poll.short ?? poll.text.replace(/^[^:\d]*:\s*/, '');
  * @param {boolean} props.connected
  */
 export default function Topbar({
-  projects, activeProject, onSelectProject, onImported, fallbackRepo,
+  projects, activeProject, onSelectProject, onImported, onToggleRestricted, onRemoveProject, onManageProjects, fallbackRepo,
   settingsMenu, moreMenu, machines, machineStatus, onOpenMetrics, poll,
   query, setQuery, searchRef, upgradeChip: upgradeChipNow, onOpenUpgrade, connected,
 }) {
@@ -71,7 +74,9 @@ export default function Topbar({
             projects={projects}
             active={activeProject}
             onSelect={onSelectProject}
-            onImported={onImported}
+            onToggleRestricted={onToggleRestricted}
+            onRemove={onRemoveProject}
+            onManage={onManageProjects}
             fallback={fallbackRepo}
           />
         </div>

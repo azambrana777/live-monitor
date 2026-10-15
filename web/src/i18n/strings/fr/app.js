@@ -144,6 +144,17 @@ export default {
     replies: { one: '{n} réponse', other: '{n} réponses' },
     confirm: 'Publier',
   },
+  noProject: {
+    title: 'Aucun projet sélectionné',
+    hint: 'Choisissez-en un dans le sélecteur ci-dessus ou gérez vos projets.',
+    manage: 'Gérer les projets',
+    import: 'Importer un projet',
+  },
+  removeProject: {
+    title: 'Retirer {project} du tableau ?',
+    text: 'Les discussions, les tâches et les données du projet sont conservées et reviennent à la réimportation. Il est seulement retiré de la liste des projets.',
+    confirm: 'Retirer',
+  },
   side: {
     resize: 'Glisse pour changer la largeur',
     closePanel: 'Fermer le panneau',

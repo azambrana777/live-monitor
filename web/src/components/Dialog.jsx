@@ -3,6 +3,9 @@ import { createPortal } from 'react-dom';
 import Icon from './Icon.jsx';
 import { useStrings } from '../i18n/useStrings.js';
 
+// Open dialogs, oldest first: Esc closes only the topmost one.
+const openDialogs = [];
+
 /**
  * The board's window: a backdrop and a box, with Esc and the backdrop
  * closing it when `onDismiss` is given. `icon` is an Icon.jsx name; anything
@@ -26,8 +29,18 @@ export default function Dialog({
   const dismissLabel = dismissOpt ?? t.app.dialog.closeEsc;
   const box = useRef(null);
   const titleId = useId();
+  const token = useRef({});
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape' && onDismiss) onDismiss(); };
+    const mine = token.current;
+    openDialogs.push(mine);
+    return () => { const i = openDialogs.indexOf(mine); if (i >= 0) openDialogs.splice(i, 1); };
+  }, []);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape' || !onDismiss) return;
+      if (openDialogs[openDialogs.length - 1] !== token.current) return;
+      onDismiss();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onDismiss]);

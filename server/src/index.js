@@ -26,7 +26,7 @@ import { registerIssueDraftRoutes } from './issuedraft.js';
 import { HOLDER_TAB } from './chattabs.js';
 import { machineOf, machines } from './machine.js';
 import { DEFAULT_PROJECT_ID, coerceKey, keyOf, makeKey, parseKey } from './keys.js';
-import { listProjects, projectOf, saveProjects, configFor, setReviewerChoice, setProjectDesign } from './projects.js';
+import { listProjects, projectOf, saveProjects, configFor, setReviewerChoice, setProjectDesign, setProjectRestricted, removeProject, removedProjectFor, forgetRemovedProject } from './projects.js';
 import { overridesOf, detectProfile, detectDefaultBranch, isProfileId } from './profiles.js';
 import { tuningSnapshot, setTuning } from './tuning.js';
 import { detectRepo } from './repo-identity.js';
@@ -407,12 +407,17 @@ const holderSummary = (h) => {
   };
 };
 
-/** The project the board opens on: the first of the registry, or the seed project when it is empty. */
-const openingProject = (projects = listProjects()) => projects[0]?.id ?? DEFAULT_PROJECT_ID; // allowlisted: empty registry falls back to the seed project
+/**
+ * The project the board opens on: the first NON-restricted one. `null` when
+ * every listed project is restricted or the registry is empty.
+ */
+const openingProject = (projects = listProjects()) => projects.length ? (projects.find((p) => !p.restricted) ?? null)?.id ?? null : null;
 
-const snapshot = (known = machines(), projects = listProjects()) => ({
+const snapshot = (known = machines(), projects = listProjects(), ids = new Set(projects.map((p) => p.id))) => ({
   // `machines()` once for the whole list, not once per task.
-  tasks: store.all().map((t) => publicTask(t, known)),
+  // Only listed projects: a removed project's `tasks.<id>.json` stays on disk
+  // (and loaded in the store) but is not on the board.
+  tasks: store.all().filter((t) => ids.has(t.project ?? DEFAULT_PROJECT_ID)).map((t) => publicTask(t, known)), // allowlisted: legacy row without project
   projectChats: allHolders().map(holderSummary),
   active: activeCount(),
   settings: settings.snapshot(),
@@ -507,7 +512,23 @@ app.post('/api/projects', (req, res) => {
     const baseBranch = pickText(body.baseBranch) ?? detectDefaultBranch(repoPath);
     if (baseBranch) entry.baseBranch = baseBranch;
     entry.kind = kind;
-    const saved = saveProjects([...listProjects(), entry]);
+    // A project removed earlier comes back with its settings; what the request
+    // states explicitly wins, and `restricted` stays cleared.
+    const old = removedProjectFor({ id: entry.id, repoPath });
+    let toSave = entry;
+    if (old) {
+      const { restricted: _r, ...rest } = old;
+      toSave = { ...rest, ...entry, name: rest.name ?? entry.name, id: entry.id };
+      for (const k of ['assignee', 'reviewer', 'language', 'baseBranch']) {
+        if (rest[k] !== undefined && pickText(body[k]) === null) toSave[k] = rest[k];
+      }
+      if (rest.kind && !requested) toSave.kind = rest.kind;
+      if (rest.overrides && !requested) toSave.overrides = rest.overrides;
+      for (const k of ['noReviewer', 'design']) if (rest[k] !== undefined) toSave[k] = rest[k];
+    }
+    const saved = saveProjects([...listProjects(), toSave]);
+    forgetRemovedProject({ id: entry.id, repoPath });
+    broadcast({ type: 'snapshot', ...snapshot() });
     return res.status(201).json(saved.find((p) => p.id === entry.id));
   } catch (e) {
     return res.status(400).json({ error: e.message });
@@ -518,9 +539,12 @@ app.get('/api/settings', (_req, res) => res.json(settings.snapshot()));
 
 // Model and effort per role. The snapshot is the default project's: a
 // project's own `claude` overrides are applied where a session starts.
+// The default project's config; a clone of the global one when it was removed.
+const tuningConfig = () => (projectOf(DEFAULT_PROJECT_ID) ? configFor(DEFAULT_PROJECT_ID) : structuredClone(config)); // allowlisted: board-wide tuning reads the default project's config
+
 app.get('/api/tuning', (_req, res) => {
   try {
-    res.json(tuningSnapshot(configFor(DEFAULT_PROJECT_ID))); // allowlisted: board-wide tuning reads the default project's config
+    res.json(tuningSnapshot(tuningConfig()));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -529,7 +553,7 @@ app.get('/api/tuning', (_req, res) => {
 app.post('/api/tuning', (req, res) => {
   try {
     setTuning(req.body ?? {});
-    res.json(tuningSnapshot(configFor(DEFAULT_PROJECT_ID))); // allowlisted: board-wide tuning reads the default project's config
+    res.json(tuningSnapshot(tuningConfig()));
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -583,6 +607,37 @@ app.post('/api/projects/:project/design', (req, res) => {
   try {
     const saved = setProjectDesign(req.params.project, body.design);
     return res.json({ project: { id: saved.id, design: saved.design !== false } });
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+});
+
+// Restricted projects stay listed (the board groups them apart) and keep being
+// polled; only the opening project skips them. 404 unknown, 400 bad body.
+app.post('/api/projects/:project/restricted', (req, res) => {
+  if (!projectOf(req.params.project)) return res.status(404).json({ error: `Unknown project: ${req.params.project}` });
+  const body = req.body;
+  if (!body || typeof body !== 'object' || typeof body.restricted !== 'boolean') {
+    return res.status(400).json({ error: 'restricted is required: true or false' });
+  }
+  try {
+    const saved = setProjectRestricted(req.params.project, body.restricted);
+    broadcast({ type: 'snapshot', ...snapshot() });
+    return res.json(saved);
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+});
+
+// Removes the project from the board: the registry entry only. Its tasks file,
+// settings overlay, attachments, chats, worktrees and repo are left alone, so
+// importing the same repoPath again brings everything back.
+app.delete('/api/projects/:project', (req, res) => {
+  if (!projectOf(req.params.project)) return res.status(404).json({ error: `Unknown project: ${req.params.project}` });
+  try {
+    removeProject(req.params.project);
+    broadcast({ type: 'snapshot', ...snapshot() });
+    return res.json({ ok: true });
   } catch (e) {
     return res.status(400).json({ error: e.message });
   }
@@ -678,7 +733,7 @@ function tabIsKnown(tab) {
 }
 
 // Tabs saved before projects existed belong to the project the board opens on.
-settings.adoptLegacyTabs(openingProject());
+settings.adoptLegacyTabs(listProjects()[0]?.id ?? DEFAULT_PROJECT_ID); // allowlisted: empty registry
 
 app.post('/api/chat-tabs/open', (req, res) => {
   if (req.body?.owner === 'project') {

@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { connectWs, api } from './api.js';
 import Board from './components/Board.jsx';
+import NoProjectState from './components/NoProjectState.jsx';
+import ImportProjectDialog from './components/ImportProjectDialog.jsx';
+import ManageProjectsDialog from './components/ManageProjectsDialog.jsx';
 import ChatPanel from './components/ChatPanel.jsx';
 import DemoPanel from './components/DemoPanel.jsx';
 import BrowserQaPanel from './components/BrowserQaPanel.jsx';
@@ -29,7 +32,7 @@ import { BUSY_STATES } from './status.js';
 import { useSidePanel } from './useSidePanel.js';
 import { useDialog } from './useDialog.jsx';
 import { lastChatOf, rememberChat } from './lastChat.js';
-import { pickActiveProject, readActiveProject, rememberActiveProject } from './activeProject.js';
+import { pickActiveProject, readActiveProject, rememberActiveProject, rememberNoProject } from './activeProject.js';
 import { cardId, holderKey, holderTabEntry, keyOf, parseHolderTab, taskKey } from './taskKey.js';
 import { parseQuery, matchTask, isExempt } from './boardFilter.js';
 import { useFileViewerScope } from './viewer/FileViewer.jsx';
@@ -113,6 +116,9 @@ export default function App() {
   const [logIssue, setLogIssue] = useState(null);
   const [timelineIssue, setTimelineIssue] = useState(null);
   const [metricsOpen, setMetricsOpen] = useState(false);
+  // The project dialogs live here: the empty state, the bar and the manager all open them.
+  const [importOpen, setImportOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
   const [crView, setCrView] = useState(null);   // { issue, reviewId }
   const [polling, setPolling] = useState(false);
   const [fetchMsg, setFetchMsg] = useState(null);
@@ -350,7 +356,7 @@ export default function App() {
   // `tasks` itself stays whole: a hidden run in flight still holds a slot.
   const shown = useMemo(() => tasks.filter((t) => !t.unassigned?.settled), [tasks]);
   const visible = useMemo(
-    () => (activeProject ? shown.filter((t) => t.project === activeProject) : shown),
+    () => (activeProject ? shown.filter((t) => t.project === activeProject) : []),
     [shown, activeProject],
   );
 
@@ -369,10 +375,7 @@ export default function App() {
    * project being left, so the panels and dialogs close rather than show
    * another project's task under the old one's number.
    */
-  const selectProject = (id) => {
-    if (!id || id === activeProject) return;
-    setActiveProject(id);
-    rememberActiveProject(id);
+  const closePanels = () => {
     setChatView(null);
     setDemoIssue(null);
     setQaIssue(null);
@@ -381,6 +384,53 @@ export default function App() {
     setCrView(null);
     setTaskDialog(null);
     setMoveDialog(null);
+  };
+
+  const selectProject = (id) => {
+    if (!id || id === activeProject) return;
+    setActiveProject(id);
+    rememberActiveProject(id);
+    closePanels();
+  };
+
+  // Restricting never moves the screen: the project stays open and in the picker.
+  const toggleRestricted = (id, restricted) => {
+    const set = (value) => setProjects((list) => list.map((p) => (p.id === id ? { ...p, restricted: !!value } : p)));
+    set(restricted);
+    api.setProjectRestricted(id, restricted).catch((e) => { set(!restricted); say(e); });
+  };
+
+  // Unregisters only: chats, tasks and data stay and return on re-import. If it
+  // was the one on screen the board shows no project; it never picks another.
+  const removeProject = async (project) => {
+    const id = typeof project === 'string' ? project : project?.id;
+    if (!id) return;
+    const ok = await ask({
+      title: fill(t.app.removeProject.title, { project: projectName(id) }), icon: 'trash',
+      text: t.app.removeProject.text,
+      options: [{ value: true, label: t.app.removeProject.confirm, tone: 'danger' }], cancel: t.app.reviewer.leave,
+    });
+    if (!ok) return;
+    // Before the request: the server broadcasts a snapshot ahead of the DELETE
+    // response, and it must find the board already on the blank state.
+    const wasActive = id === activeProject;
+    const before = projects;
+    if (wasActive) {
+      setActiveProject(null);
+      rememberNoProject();
+      closePanels();
+    }
+    setProjects((list) => list.filter((p) => p.id !== id));
+    try {
+      await api.removeProject(id);
+    } catch (e) {
+      setProjects(before);
+      if (wasActive) {
+        setActiveProject(id);
+        rememberActiveProject(id);
+      }
+      say(e);
+    }
   };
 
   /** An imported project is the one you want to look at, so the board goes there. */
@@ -448,7 +498,7 @@ export default function App() {
     .filter((t) => t.project === activeProject);
   // The holders of the project on screen: the board's card and the strip's tabs.
   const holders = useMemo(
-    () => (activeProject ? projectChats.filter((h) => h.project === activeProject) : projectChats),
+    () => (activeProject ? projectChats.filter((h) => h.project === activeProject) : []),
     [projectChats, activeProject],
   );
 
@@ -674,10 +724,12 @@ export default function App() {
    * context when nothing here is waiting.
    */
   const awaiting = useMemo(() => {
-    const all = shown.filter((t) => (t.awaitingYou ?? []).length > 0);
+    // Only registered projects: a removed project's tasks must not reopen it.
+    const known = new Set(projects.map((p) => p.id));
+    const all = shown.filter((t) => (t.awaitingYou ?? []).length > 0 && (!known.size || known.has(t.project)));
     const here = (t) => t.project === activeProject;
     return [...all.filter(here), ...all.filter((t) => !here(t))];
-  }, [shown, activeProject]);
+  }, [shown, activeProject, projects]);
   // Live, like `dialogTask`: the dialog follows the broadcasts while it is open.
   const movingTask = moveDialog ? visible.find((t) => t.issue === moveDialog.issue) ?? null : null;
   // A task gone from the board takes its dialog with it, so it cannot reopen on its own.
@@ -877,6 +929,7 @@ export default function App() {
     >
       <Topbar
         projects={projects} activeProject={activeProject} onSelectProject={selectProject} onImported={projectImported}
+        onToggleRestricted={toggleRestricted} onRemoveProject={removeProject} onManageProjects={() => setManageOpen(true)}
         fallbackRepo={meta.github.repo ? `${meta.github.repo} · @${meta.github.assignee}` : null}
         settingsMenu={{
           activeProject, projectLabel: projectName(activeProject), settings, eff, isOwn, saveSettings, saveProjectSetting,
@@ -901,135 +954,139 @@ export default function App() {
 
       {crossHint && <div className="board-search-hint">{crossHint}</div>}
 
-      <Board
-        tasks={boardTasks}
-        loading={!loaded}
-        polling={buscando}
-        onPollNow={runPoll}
-        onOpenSettings={() => setSettingsOpen(true)}
-        projectChats={holders}
-        inflightKeys={pending}
-        onOpenProjectChat={(project, machine) => openProjectChat(project, machine, lastChatOf(holderKey(project, machine)))}
-        query={query}
-        parsed={parsed}
-        doneTotal={visible.filter((t) => t.state === 'done').length}
-        machines={machines}
-        quota={quota}
-        quotaNow={quotaNow}
-        onSetMachine={(issue, machine) => api.setMachine(activeProject, issue, machine).catch(say)}
-        onChat={(issue) => openChat(activeProject, issue)}
-        // Like a chat: a panel opened while the side is a rail must be seen.
-        onDemo={(issue) => { setDemoIssue(issue); side.expand(); }}
-        onQa={(issue) => { setQaIssue(issue); side.expand(); }}
-        onSetBrowserQa={(issue, mode) => api.setBrowserQa(activeProject, issue, mode).catch(say)}
-        onSetDemo={(issue, mode) => api.setDemo(activeProject, issue, mode).catch(say)}
-        onLog={(issue) => { setLogIssue(issue); side.expand(); }}
-        onTimeline={(issue) => { setTimelineIssue(issue); side.expand(); }}
-        onReady={(issue) => markReady(activeProject, issue)}
-        onReviewer={() => setReviewerSettings(activeProject)}
-        onRetry={(issue) => api.retry(activeProject, issue).catch(say)}
-        onRenewLogin={requestLoginRenew}
-        onBootstrapRepo={async (issue, base) => {
-          const repo = meta.github?.repo ?? activeProject;
-          const go = await ask({
-            title: fill(t.app.bootstrap.title, { issue }), icon: 'sprout',
-            text: fill(t.app.bootstrap.text, { base, repo }),
-            options: [{ value: true, label: t.app.bootstrap.confirm, tone: 'warn' }],
-            cancel: t.app.reviewer.leave, focus: 'cancel',
-          });
-          if (go) api.bootstrapRepo(activeProject, issue).catch(say);
-        }}
-        onChangeBase={async (issue, baseBranch) => {
-          const go = await ask({
-            title: fill(t.app.base.title, { issue }), icon: 'sprout',
-            text: fill(t.app.base.text, { project: activeProject, base: baseBranch }),
-            options: [{ value: true, label: t.app.base.confirm, tone: 'warn' }],
-            cancel: t.app.reviewer.leave, focus: 'cancel',
-          });
-          if (!go) return;
-          api.changeBaseBranch(activeProject, { baseBranch, issue }).then((r) => {
-            if (r?.retryError) say(fill(t.app.base.retryFailed, { base: baseBranch, error: r.retryError }));
-          }).catch((e) => {
-            const heads = e.data?.remoteHeads;
-            say(heads?.length ? fill(t.app.base.remoteHeads, { message: e.message, heads: heads.join(', ') }) : e);
-          });
-        }}
-        onAcceptFix={async (issue) => {
-          const go = await ask({
-            title: fill(t.app.acceptFix.title, { issue }), icon: 'play',
-            text: t.app.acceptFix.text,
-            options: [{ value: true, label: t.app.acceptFix.confirm }],
-          });
-          if (go) api.acceptFix(activeProject, issue).catch(say);
-        }}
-        onStart={startTask}
-        onPublishPr={(issue) => setTaskDialog({ project: activeProject, issue, kind: 'pr' })}
-        // Like `onDraftCr`: the window opens first and the draft is asked for
-        // after, so the person sees «redactando…» instead of a click that
-        // seems to do nothing. A draft already made is not redone.
-        onCloseIssue={(issue) => {
-          setTaskDialog({ project: activeProject, issue, kind: 'close' });
-          const t = visible.find((x) => x.issue === issue);
-          if (!t?.hasClosingDraft || t?.closing?.status === 'failed') api.draftClose(activeProject, issue).catch(say);
-        }}
-        onAnswer={(issue) => setTaskDialog({ project: activeProject, issue, kind: 'answer' })}
-        onReviewPlan={(issue) => setTaskDialog({ project: activeProject, issue, kind: 'plan' })}
-        onSetApprovePlan={(issue, mode) => api.setApprovePlan(activeProject, issue, mode).catch(say)}
-        onSetFixGaps={(issue, mode) => api.setFixGaps(activeProject, issue, mode).catch(say)}
-        onSetDesign={(issue, on) => api.setDesign(activeProject, issue, on).catch(say)}
-        onSetMode={(issue, mode) => api.setMode(activeProject, issue, mode).catch(say)}
-        onStartCr={(issue) => api.startCr(activeProject, issue).catch(say)}
-        onMergeMain={(issue) => inflight.current.run(actionKey('merge', activeProject, issue), () => conPendientes(() => api.mergeMain(activeProject, issue)))}
-        onPush={(issue) => inflight.current.run(actionKey('push', activeProject, issue), () => api.push(activeProject, issue).catch(say))}
-        onMergeHelp={async (issue) => {
-          const go = await ask({
-            title: t.app.mergeHelp.title, icon: 'message',
-            text: t.app.mergeHelp.text,
-            options: [{ value: true, label: t.app.mergeHelp.confirm }],
-          });
-          if (go) api.mergeHelp(activeProject, issue).then(() => openChat(activeProject, issue)).catch(say);
-        }}
-        // Like the other four openers: a panel opened while it is a rail
-        // must be seen, and on a phone it must not stay collapsed.
-        onOpenCr={(issue, reviewId) => { setCrView({ issue, reviewId }); side.expand(); }}
-        onToggleActiveCr={(issue, reviewId, active) =>
-          api.setActiveCr(activeProject, issue, reviewId, active).catch(say)}
-        onDraftCr={(issue, reviewId) => {
-          setCrView({ issue, reviewId });
-          side.expand();
-          api.draftCrReplies(activeProject, issue, reviewId).catch(say);
-        }}
-        onCreateWorktree={(issue) => api.createWorktree(activeProject, issue).catch(say)}
-        onStartStack={(issue) => api.startStack(activeProject, issue).catch(say)}
-        onStopStack={(issue) => api.stopStack(activeProject, issue).catch(say)}
-        onDeleteWorktree={async (issue) => {
-          const go = await ask({
-            title: fill(t.app.deleteWorktree.title, { issue }), icon: 'trash',
-            text: t.app.deleteWorktree.text,
-            options: [{ value: true, label: t.app.deleteWorktree.confirm, tone: 'danger' }], cancel: t.app.reviewer.leave,
-          });
-          if (go) api.deleteWorktree(activeProject, issue).catch(say);
-        }}
-        onMove={(issue, to) => setMoveDialog({ issue, to })}
-        onRetryMove={(issue) => api.retryMove(activeProject, issue).catch(say)}
-        onDiscardMove={async (issue) => {
-          const moving = visible.find((t) => t.issue === issue)?.moving;
-          const go = await ask({
-            title: fill(t.app.discardMove.title, { issue, to: moving ? fill(t.app.discardMove.to, { to: moving.to }) : '' }), icon: 'truck',
-            text: fill(t.app.discardMove.text, { from: moving?.from ?? t.app.discardMove.fromFallback }),
-            options: [{ value: true, label: t.app.discardMove.confirm, tone: 'warn' }], cancel: t.app.start.leave,
-          });
-          if (go) api.discardMove(activeProject, issue).catch(say);
-        }}
-        onDeletePlace={async (issue, machine) => {
-          const go = await ask({
-            title: fill(t.app.deletePlace.title, { issue, machine }), icon: 'trash',
-            text: t.app.deletePlace.text,
-            options: [{ value: true, label: t.common.delete, tone: 'danger' }], cancel: t.app.reviewer.leave,
-          });
-          if (go) api.deletePlace(activeProject, issue, machine).catch(say);
-        }}
-      />
+      {activeProject || !loaded ? (
+        <Board
+          tasks={boardTasks}
+          loading={!loaded}
+          polling={buscando}
+          onPollNow={runPoll}
+          onOpenSettings={() => setSettingsOpen(true)}
+          projectChats={holders}
+          inflightKeys={pending}
+          onOpenProjectChat={(project, machine) => openProjectChat(project, machine, lastChatOf(holderKey(project, machine)))}
+          query={query}
+          parsed={parsed}
+          doneTotal={visible.filter((t) => t.state === 'done').length}
+          machines={machines}
+          quota={quota}
+          quotaNow={quotaNow}
+          onSetMachine={(issue, machine) => api.setMachine(activeProject, issue, machine).catch(say)}
+          onChat={(issue) => openChat(activeProject, issue)}
+          // Like a chat: a panel opened while the side is a rail must be seen.
+          onDemo={(issue) => { setDemoIssue(issue); side.expand(); }}
+          onQa={(issue) => { setQaIssue(issue); side.expand(); }}
+          onSetBrowserQa={(issue, mode) => api.setBrowserQa(activeProject, issue, mode).catch(say)}
+          onSetDemo={(issue, mode) => api.setDemo(activeProject, issue, mode).catch(say)}
+          onLog={(issue) => { setLogIssue(issue); side.expand(); }}
+          onTimeline={(issue) => { setTimelineIssue(issue); side.expand(); }}
+          onReady={(issue) => markReady(activeProject, issue)}
+          onReviewer={() => setReviewerSettings(activeProject)}
+          onRetry={(issue) => api.retry(activeProject, issue).catch(say)}
+          onRenewLogin={requestLoginRenew}
+          onBootstrapRepo={async (issue, base) => {
+            const repo = meta.github?.repo ?? activeProject;
+            const go = await ask({
+              title: fill(t.app.bootstrap.title, { issue }), icon: 'sprout',
+              text: fill(t.app.bootstrap.text, { base, repo }),
+              options: [{ value: true, label: t.app.bootstrap.confirm, tone: 'warn' }],
+              cancel: t.app.reviewer.leave, focus: 'cancel',
+            });
+            if (go) api.bootstrapRepo(activeProject, issue).catch(say);
+          }}
+          onChangeBase={async (issue, baseBranch) => {
+            const go = await ask({
+              title: fill(t.app.base.title, { issue }), icon: 'sprout',
+              text: fill(t.app.base.text, { project: activeProject, base: baseBranch }),
+              options: [{ value: true, label: t.app.base.confirm, tone: 'warn' }],
+              cancel: t.app.reviewer.leave, focus: 'cancel',
+            });
+            if (!go) return;
+            api.changeBaseBranch(activeProject, { baseBranch, issue }).then((r) => {
+              if (r?.retryError) say(fill(t.app.base.retryFailed, { base: baseBranch, error: r.retryError }));
+            }).catch((e) => {
+              const heads = e.data?.remoteHeads;
+              say(heads?.length ? fill(t.app.base.remoteHeads, { message: e.message, heads: heads.join(', ') }) : e);
+            });
+          }}
+          onAcceptFix={async (issue) => {
+            const go = await ask({
+              title: fill(t.app.acceptFix.title, { issue }), icon: 'play',
+              text: t.app.acceptFix.text,
+              options: [{ value: true, label: t.app.acceptFix.confirm }],
+            });
+            if (go) api.acceptFix(activeProject, issue).catch(say);
+          }}
+          onStart={startTask}
+          onPublishPr={(issue) => setTaskDialog({ project: activeProject, issue, kind: 'pr' })}
+          // Like `onDraftCr`: the window opens first and the draft is asked for
+          // after, so the person sees «redactando…» instead of a click that
+          // seems to do nothing. A draft already made is not redone.
+          onCloseIssue={(issue) => {
+            setTaskDialog({ project: activeProject, issue, kind: 'close' });
+            const t = visible.find((x) => x.issue === issue);
+            if (!t?.hasClosingDraft || t?.closing?.status === 'failed') api.draftClose(activeProject, issue).catch(say);
+          }}
+          onAnswer={(issue) => setTaskDialog({ project: activeProject, issue, kind: 'answer' })}
+          onReviewPlan={(issue) => setTaskDialog({ project: activeProject, issue, kind: 'plan' })}
+          onSetApprovePlan={(issue, mode) => api.setApprovePlan(activeProject, issue, mode).catch(say)}
+          onSetFixGaps={(issue, mode) => api.setFixGaps(activeProject, issue, mode).catch(say)}
+          onSetDesign={(issue, on) => api.setDesign(activeProject, issue, on).catch(say)}
+          onSetMode={(issue, mode) => api.setMode(activeProject, issue, mode).catch(say)}
+          onStartCr={(issue) => api.startCr(activeProject, issue).catch(say)}
+          onMergeMain={(issue) => inflight.current.run(actionKey('merge', activeProject, issue), () => conPendientes(() => api.mergeMain(activeProject, issue)))}
+          onPush={(issue) => inflight.current.run(actionKey('push', activeProject, issue), () => api.push(activeProject, issue).catch(say))}
+          onMergeHelp={async (issue) => {
+            const go = await ask({
+              title: t.app.mergeHelp.title, icon: 'message',
+              text: t.app.mergeHelp.text,
+              options: [{ value: true, label: t.app.mergeHelp.confirm }],
+            });
+            if (go) api.mergeHelp(activeProject, issue).then(() => openChat(activeProject, issue)).catch(say);
+          }}
+          // Like the other four openers: a panel opened while it is a rail
+          // must be seen, and on a phone it must not stay collapsed.
+          onOpenCr={(issue, reviewId) => { setCrView({ issue, reviewId }); side.expand(); }}
+          onToggleActiveCr={(issue, reviewId, active) =>
+            api.setActiveCr(activeProject, issue, reviewId, active).catch(say)}
+          onDraftCr={(issue, reviewId) => {
+            setCrView({ issue, reviewId });
+            side.expand();
+            api.draftCrReplies(activeProject, issue, reviewId).catch(say);
+          }}
+          onCreateWorktree={(issue) => api.createWorktree(activeProject, issue).catch(say)}
+          onStartStack={(issue) => api.startStack(activeProject, issue).catch(say)}
+          onStopStack={(issue) => api.stopStack(activeProject, issue).catch(say)}
+          onDeleteWorktree={async (issue) => {
+            const go = await ask({
+              title: fill(t.app.deleteWorktree.title, { issue }), icon: 'trash',
+              text: t.app.deleteWorktree.text,
+              options: [{ value: true, label: t.app.deleteWorktree.confirm, tone: 'danger' }], cancel: t.app.reviewer.leave,
+            });
+            if (go) api.deleteWorktree(activeProject, issue).catch(say);
+          }}
+          onMove={(issue, to) => setMoveDialog({ issue, to })}
+          onRetryMove={(issue) => api.retryMove(activeProject, issue).catch(say)}
+          onDiscardMove={async (issue) => {
+            const moving = visible.find((t) => t.issue === issue)?.moving;
+            const go = await ask({
+              title: fill(t.app.discardMove.title, { issue, to: moving ? fill(t.app.discardMove.to, { to: moving.to }) : '' }), icon: 'truck',
+              text: fill(t.app.discardMove.text, { from: moving?.from ?? t.app.discardMove.fromFallback }),
+              options: [{ value: true, label: t.app.discardMove.confirm, tone: 'warn' }], cancel: t.app.start.leave,
+            });
+            if (go) api.discardMove(activeProject, issue).catch(say);
+          }}
+          onDeletePlace={async (issue, machine) => {
+            const go = await ask({
+              title: fill(t.app.deletePlace.title, { issue, machine }), icon: 'trash',
+              text: t.app.deletePlace.text,
+              options: [{ value: true, label: t.common.delete, tone: 'danger' }], cancel: t.app.reviewer.leave,
+            });
+            if (go) api.deletePlace(activeProject, issue, machine).catch(say);
+          }}
+        />
+      ) : (
+        <NoProjectState onManage={() => setManageOpen(true)} onImport={() => setImportOpen(true)} />
+      )}
 
       {movingTask && (
         <MoveDialog
@@ -1043,6 +1100,16 @@ export default function App() {
       )}
 
       {modelsOpen && <ModelsDialog onClose={() => setModelsOpen(false)} />}
+      {importOpen && (
+        <ImportProjectDialog onClose={() => setImportOpen(false)} onImported={(p) => { setImportOpen(false); projectImported(p); }} />
+      )}
+      {manageOpen && (
+        <ManageProjectsDialog
+          projects={projects} activeProject={activeProject} onClose={() => setManageOpen(false)}
+          onImport={() => setImportOpen(true)} onSelect={selectProject}
+          onToggleRestricted={toggleRestricted} onRemove={removeProject}
+        />
+      )}
       {metricsOpen && <MetricsDialog project={activeProject} onClose={() => setMetricsOpen(false)} />}
 
       {reviewerSettings && !reviewerAsk && (

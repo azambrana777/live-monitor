@@ -146,6 +146,7 @@
 /* ---------- foot of the closed card ---------- */
 .tc-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
 .tc-foot:empty { display: none; }
+.tc-foot-trash { margin-left: auto; }
 
 /* ---------- lengthened: the control groups ---------- */
 .tc-groups { display: flex; flex-direction: column; gap: 8px; margin-top: 1px; }

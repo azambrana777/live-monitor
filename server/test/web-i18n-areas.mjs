@@ -23,7 +23,7 @@ export const AREAS = {
   topbar: ['components/topbar/', 'components/ui/ExpandButton.jsx', 'components/ui/StateButton.jsx',
     'components/ProjectPicker.jsx', 'components/LoginChips.jsx', 'components/LoginCard.jsx',
     'components/LoginDialog.jsx', 'components/PluginChips.jsx', 'components/RequiredPluginsDialog.jsx',
-    'components/ImportProjectDialog.jsx'],
+    'components/ImportProjectDialog.jsx', 'components/ManageProjectsDialog.jsx'],
   board: ['components/Board.jsx', 'components/TaskCard.jsx', 'components/CompletedRail.jsx',
     'components/CompletedStrip.jsx', 'components/ProjectChatCard.jsx', 'components/BackgroundStrip.jsx'],
   card: ['components/card/', 'components/ChangeRequestCard.jsx', 'components/ChangeRequestPanel.jsx',

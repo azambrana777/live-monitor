@@ -50,6 +50,7 @@ export default {
     worktreeTitle: 'Parar el stack y eliminar el worktree para liberar disco (la rama y el PR se conservan)',
     worktreeHelp: 'Para el stack y borra la carpeta en {machine}. La rama y el PR se conservan.',
     worktreeLocked: 'Borrar el worktree: cuando la tarea pare',
+    worktreeDelete: 'Eliminar worktree',
     closeIssue: 'Cerrar issue',
     closePublishing: 'Publicando el cierre en GitHub…',
     closeNeedsWorktree: 'Necesita worktree: la sesión que redacta la propuesta corre dentro de él, que es lo que le deja citar rutas',

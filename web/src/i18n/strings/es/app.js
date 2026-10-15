@@ -144,6 +144,17 @@ export default {
     replies: { one: '{n} respuesta', other: '{n} respuestas' },
     confirm: 'Publicar',
   },
+  noProject: {
+    title: 'Ningún proyecto seleccionado',
+    hint: 'Elige uno en el selector de arriba o gestiona tus proyectos.',
+    manage: 'Gestionar proyectos',
+    import: 'Importar proyecto',
+  },
+  removeProject: {
+    title: '¿Quitar {project} del tablero?',
+    text: 'Los chats, las tareas y los datos del proyecto se conservan y vuelven al volver a importarlo. Solo se quita de la lista de proyectos.',
+    confirm: 'Quitar',
+  },
   side: {
     resize: 'Arrastra para cambiar el ancho',
     closePanel: 'Cerrar el panel',

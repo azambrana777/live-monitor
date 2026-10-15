@@ -242,6 +242,13 @@ function normalize(raw, where) {
     }
     out.design = raw.design;
   }
+  if (raw.restricted !== undefined && raw.restricted !== null) {
+    if (typeof raw.restricted !== 'boolean') {
+      throw new Error(`${where}.restricted: expected true or false, not ${JSON.stringify(raw.restricted)}`);
+    }
+    // Stored only when true, so an unrestricted registry round-trips as it was.
+    if (raw.restricted) out.restricted = true;
+  }
   if (raw.language !== undefined && raw.language !== null) {
     if (typeof raw.language !== 'string' || !LANGUAGE_RE.test(raw.language)) {
       throw new Error(`${where}.language: expected a code such as "en" or "es", not ${JSON.stringify(raw.language)}`);
@@ -277,7 +284,7 @@ function normalizeList(list) {
   if (!Array.isArray(list)) {
     throw new Error(`projects.json: expected an array, not ${JSON.stringify(list ?? null)}`);
   }
-  if (!list.length) throw new Error('projects.json: the project list cannot be empty');
+  // An empty list is valid: every project may have been removed from the board.
   const out = list.map((raw, i) => normalize(raw, `projects[${i}]`));
   const seen = new Set();
   for (const p of out) {
@@ -609,4 +616,92 @@ export function setReviewerChoice(id, { reviewer, noReviewer } = {}) {
     delete target.noReviewer;
   }
   return saveProjects(list).find((p) => p.id === id);
+}
+
+/**
+ * Restricts a project (or lifts the restriction), through the same single
+ * writer. Only `true` is stored; `false`/`null` remove the field.
+ *
+ * @param {string} id
+ * @param {boolean|null} value
+ * @returns {Project} the saved entry.
+ * @throws {Error} if the project is unknown or `value` is not true, false or null.
+ */
+export function setProjectRestricted(id, value) {
+  if (value !== null && typeof value !== 'boolean') throw new Error(`setProjectRestricted: expected true or false, not ${JSON.stringify(value)}`);
+  const list = load().map((p) => ({ ...p }));
+  const target = list.find((p) => p.id === id);
+  if (!target) throw new Error(`setProjectRestricted: no project is registered as ${JSON.stringify(id ?? null)}`);
+  if (value === true) target.restricted = true;
+  else delete target.restricted;
+  return saveProjects(list).find((p) => p.id === id);
+}
+
+/**
+ * Removes a project from the registry and NOTHING else: `tasks.<id>.json`, the
+ * settings overlay, attachments, project chats, worktrees and the repo stay
+ * where they are, so importing the same `repoPath` again (same id) finds them.
+ * The registry may end up empty; removing the in-memory seed persists `[]`
+ * instead of re-seeding.
+ *
+ * @param {string} id
+ * @returns {Project[]} the saved list.
+ * @throws {Error} if the project is unknown.
+ */
+export function removeProject(id) {
+  const list = load();
+  const gone = list.find((p) => p.id === id);
+  if (!gone) throw new Error(`removeProject: no project is registered as ${JSON.stringify(id ?? null)}`);
+  // Keep the entry's settings (reviewer, baseBranch, overrides, kind...) so a
+  // re-import of the same checkout restores them. Written only here, on remove.
+  const kept = readRemoved().filter((r) => r.id !== gone.id && repoKey(r.repoPath) !== repoKey(gone.repoPath));
+  writeRemoved([...kept, structuredClone(gone)]);
+  return saveProjects(list.filter((p) => p.id !== id));
+}
+
+const REMOVED_FILE = path.join(DATA_DIR, 'projects-removed.json');
+
+/** Path identity for matching a re-import: slashes normalised, case-insensitive. */
+const repoKey = (p) => String(p ?? '').replace(/[\\]/g, '/').replace(/\/+$/, '').toLowerCase();
+
+/** Read lazily on every use (never at import): the file is rarely touched. */
+function readRemoved() {
+  try {
+    const raw = JSON.parse(readFileSync(REMOVED_FILE, 'utf8'));
+    return Array.isArray(raw) ? raw.filter((r) => r && typeof r === 'object') : [];
+  } catch (err) {
+    if (err.code === 'ENOENT' || err instanceof SyntaxError) return [];
+    throw err;
+  }
+}
+
+function writeRemoved(list) {
+  mkdirSync(DATA_DIR, { recursive: true });
+  writeFileSync(REMOVED_FILE, `${JSON.stringify(list, null, 2)}
+`, 'utf8');
+}
+
+/**
+ * The entry a removed project left behind, matched by repoPath (slashes and
+ * case normalised) or by id. Does not modify anything.
+ *
+ * @param {{id?: string, repoPath?: string}} match
+ * @returns {Project|undefined}
+ */
+export function removedProjectFor({ id, repoPath } = {}) {
+  const key = repoPath ? repoKey(repoPath) : null;
+  return readRemoved().find((r) => (key && repoKey(r.repoPath) === key) || (id && r.id === id));
+}
+
+/**
+ * Drops the removed entry matching the same id or repoPath, once it has been
+ * restored. Writes only when something is dropped.
+ *
+ * @param {{id?: string, repoPath?: string}} match
+ */
+export function forgetRemovedProject({ id, repoPath } = {}) {
+  const key = repoPath ? repoKey(repoPath) : null;
+  const all = readRemoved();
+  const rest = all.filter((r) => !((key && repoKey(r.repoPath) === key) || (id && r.id === id)));
+  if (rest.length !== all.length) writeRemoved(rest);
 }

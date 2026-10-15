@@ -45,6 +45,7 @@ export default {
     worktreeTitle: 'Stop the stack and delete the worktree to free disk space (the branch and the PR are kept)',
     worktreeHelp: 'Stops the stack and deletes the folder on {machine}. The branch and the PR are kept.',
     worktreeLocked: 'Delete the worktree: when the task stops',
+    worktreeDelete: 'Delete worktree',
     closeIssue: 'Close issue',
     closePublishing: 'Publishing the closure on GitHub…',
     closeNeedsWorktree: 'Needs a worktree: the session that writes the proposal runs inside it, which is what lets it cite paths',
