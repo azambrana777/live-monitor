@@ -43,6 +43,15 @@ const OVERRIDABLE = {
     }
     return n;
   },
+  gitRefreshSeconds(value) {
+    const n = Number(value);
+    // 0 switches the git refresh off; below 15 s it would be a `git fetch`
+    // storm per project.
+    if (value === null || value === '' || !Number.isInteger(n) || !(n === 0 || (n >= 15 && n <= 3600))) {
+      throw new Error('gitRefreshSeconds must be 0 (off) or an integer between 15 and 3600');
+    }
+    return n;
+  },
   autoStart: (value) => Boolean(value),
   browserQa: (value) => Boolean(value),
   approvePlan: (value) => Boolean(value),
@@ -51,7 +60,7 @@ const OVERRIDABLE = {
 };
 
 /** A stable order to apply a project patch in, so a rejected patch fails the same way twice. */
-const OVERRIDE_ORDER = ['defaultMachine', 'pollIntervalMinutes', 'autoStart', 'browserQa', 'approvePlan', 'fixGaps', 'demo'];
+const OVERRIDE_ORDER = ['defaultMachine', 'pollIntervalMinutes', 'gitRefreshSeconds', 'autoStart', 'browserQa', 'approvePlan', 'fixGaps', 'demo'];
 
 /** The session roles whose model and effort the board can override. */
 export const TUNING_ROLES = Object.freeze(['triage', 'advisor', 'plan', 'fix', 'pr', 'demo', 'reply', 'chat', 'qa', 'qaPlan']);
@@ -210,6 +219,8 @@ class Settings extends EventEmitter {
       maxActiveTasks: config.limits.defaultMaxActiveTasks,
       autoStart: true,
       pollIntervalMinutes: Math.round((config.poll?.intervalSeconds ?? 600) / 60),
+      // How often git state (fetch + branch status) is refreshed; 0 = off.
+      gitRefreshSeconds: config.poll?.gitIntervalSeconds ?? 300,
       // Where a task lands when nobody chose: auto-start never asks, so this
       // is the one decision that lets it stay unattended with two machines.
       defaultMachine: 'local',
@@ -312,6 +323,7 @@ class Settings extends EventEmitter {
 
   get maxActiveTasks() { return this.values.maxActiveTasks; }
   get pollIntervalMinutes() { return this.values.pollIntervalMinutes; }
+  get gitRefreshSeconds() { return this.values.gitRefreshSeconds; }
   get autoStart() { return this.values.autoStart; }
   get ceiling() { return config.limits.maxActiveTasksCeiling; }
 
@@ -361,6 +373,9 @@ class Settings extends EventEmitter {
 
   /** {@link Settings#pollIntervalMinutes} for one project. */
   pollIntervalMinutesFor(id) { return this.valueFor(id, 'pollIntervalMinutes'); }
+
+  /** {@link Settings#gitRefreshSeconds} for one project. */
+  gitRefreshSecondsFor(id) { return this.valueFor(id, 'gitRefreshSeconds'); }
 
   /** {@link Settings#defaultMachine} for one project, with the same fallback to local. */
   defaultMachineFor(id) {
@@ -427,6 +442,9 @@ class Settings extends EventEmitter {
     }
     if (patch.pollIntervalMinutes !== undefined) {
       this.values.pollIntervalMinutes = OVERRIDABLE.pollIntervalMinutes(patch.pollIntervalMinutes);
+    }
+    if (patch.gitRefreshSeconds !== undefined) {
+      this.values.gitRefreshSeconds = OVERRIDABLE.gitRefreshSeconds(patch.gitRefreshSeconds);
     }
     if (patch.upgrade !== undefined) this.values.upgrade = nextUpgradeSettings(this.upgrade, patch.upgrade);
     if (patch.autoStart !== undefined) this.values.autoStart = OVERRIDABLE.autoStart(patch.autoStart);

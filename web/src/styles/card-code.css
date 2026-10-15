@@ -101,3 +101,7 @@
 @media (prefers-reduced-motion: reduce) {
   .tcc-cr { transition: none; }
 }
+
+/* ---- Git freshness and why Push is off ---- */
+.tcc-git-note, .tcc-git-unknown { flex-basis: 100%; font-size: var(--fs-sm); color: var(--muted); }
+.tcc-git-dirty { color: var(--amber); }

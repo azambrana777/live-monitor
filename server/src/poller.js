@@ -8,7 +8,7 @@ import { makeKey, keyOf } from './keys.js';
 import { listAllBranches } from './worktree.js';
 import {
   tick, refreshClassification, reopenIfNeeded, checkChangeRequests, isRunning, refreshBranchStatus, refreshChecks,
-  clearClosedWithoutPr, completeOnIssueClosed, settleUnassigned,
+  clearClosedWithoutPr, completeOnIssueClosed, settleUnassigned, refreshGitNow,
 } from './pipeline.js';
 import { findManualKeyword, shouldAskAboutMode } from './mode.js';
 import { evaluateQuota } from './quota.js';
@@ -241,7 +241,19 @@ export async function sweepClosedIssues(project, seen, {
 }
 
 let inFlight = null;
+let startedAt = null;
+let current = null;
 let lastPollAt = null;
+
+/** A cycle running longer than this is abandoned from the flag's point of view. */
+const WATCHDOG_MS = 10 * 60_000;
+const hooks = { watchdogMs: WATCHDOG_MS, runCycle: null };
+
+/** Test seam: inject the watchdog timeout and/or the cycle body. Call with no argument to reset. */
+export function setPollTestHooks({ watchdogMs, runCycle } = {}) {
+  hooks.watchdogMs = watchdogMs ?? WATCHDOG_MS;
+  hooks.runCycle = runCycle ?? null;
+}
 
 /**
  * When each project's issue list was last asked for, in milliseconds — stamped
@@ -265,7 +277,7 @@ const DUE_SLACK_MS = 1_000;
     from the real thing instead of from the page's last reload. */
 export const pollEvents = new EventEmitter();
 
-export const pollStatus = () => ({ lastPollAt, running: Boolean(inFlight) });
+export const pollStatus = () => ({ lastPollAt, running: Boolean(inFlight), startedAt: inFlight ? startedAt : null });
 
 /**
  * Is it this project's turn? A project never polled is always due.
@@ -278,6 +290,15 @@ function isDue(project, now) {
   if (last === undefined) return true;
   const minutes = settings.pollIntervalMinutesFor(project.id);
   return now - last >= minutes * 60_000 - DUE_SLACK_MS;
+}
+
+/** Clears the running flag if `token` is still the current cycle, then announces the final state. */
+function release(token) {
+  if (current !== token) return;
+  current = null;
+  inFlight = null;
+  startedAt = null;
+  pollEvents.emit('poll', pollStatus());
 }
 
 /**
@@ -298,9 +319,24 @@ export function pollNow({ scheduled = false } = {}) {
   const now = Date.now();
   const due = scheduled ? all.filter((p) => isDue(p, now)) : all;
   for (const project of due) lastPolledAt.set(project.id, now);
-  inFlight = runCycle(due).finally(() => { inFlight = null; });
-  // Announced at both ends, so every open board shows the cycle running and
-  // not just the tab whose button started it.
+  const token = {};
+  const timeout = new Promise((resolve) => {
+    token.timer = setTimeout(() => {
+      if (current !== token) return;
+      console.warn(`poll: the cycle ran over ${Math.round(hooks.watchdogMs / 1000)} s; abandoning it so a new one can start`);
+      release(token);
+      resolve({ error: 'poll watchdog: the cycle was abandoned' });
+    }, hooks.watchdogMs);
+    token.timer.unref?.();
+  });
+  current = token;
+  startedAt = Date.now();
+  const promise = Promise.race([(hooks.runCycle ?? runCycle)(due), timeout])
+    .finally(() => { clearTimeout(token.timer); release(token); });
+  inFlight = promise;
+  // Announced at the start, so every open board shows the cycle running and
+  // not just the tab whose button started it. The end is announced by
+  // `release`, after the flag is cleared.
   pollEvents.emit('poll', pollStatus());
   return inFlight;
 }
@@ -464,8 +500,9 @@ async function runCycle(due) {
   evaluateQuota();
 
   if (errors.length) found.error = errors.join('; ');
+  // No emit here: the cycle is still flagged running at this point, and the
+  // final state is announced by `release` once the flag is cleared.
   lastPollAt = new Date().toISOString();
-  pollEvents.emit('poll', pollStatus());
   return found;
 }
 
@@ -484,6 +521,28 @@ async function runCycle(due) {
 export function shortestPollMinutes(minutes) {
   const m = Math.min(...minutes);
   return Number.isFinite(m) && m > 0 ? m : null;
+}
+
+/** The shortest positive git refresh period, in seconds; `null` when all are 0 (off) or there are none. */
+export function shortestGitRefreshSeconds(seconds) {
+  const positive = seconds.filter((n) => Number.isFinite(n) && n > 0);
+  return positive.length ? Math.min(...positive) : null;
+}
+
+let gitRefreshing = false;
+
+/** One timer tick: never overlaps a previous run, never throws. */
+export async function gitRefreshTick(refresh = refreshGitNow) {
+  if (gitRefreshing) return false;
+  gitRefreshing = true;
+  try {
+    await refresh({ force: true });
+  } catch (e) {
+    console.warn(`git refresh failed: ${e?.message ?? e}`);
+  } finally {
+    gitRefreshing = false;
+  }
+  return true;
 }
 
 export function startPolling() {
@@ -508,8 +567,23 @@ export function startPolling() {
     console.log(`buscando issues y change requests cada ${minutes} min${detail}`);
   };
 
+  let gitTimer = null;
+  let gitPeriod = null;
+  const armGit = () => {
+    const seconds = shortestGitRefreshSeconds(listProjects().map((p) => settings.gitRefreshSecondsFor(p.id)));
+    if (seconds === gitPeriod) return;
+    gitPeriod = seconds;
+    if (gitTimer) clearInterval(gitTimer);
+    gitTimer = null;
+    if (seconds === null) return;
+    gitTimer = setInterval(() => { gitRefreshTick(); }, seconds * 1000);
+    gitTimer.unref?.();
+    console.log(`refrescando el estado de git cada ${seconds} s`);
+  };
+
   pollNow();
   arm();
-  settings.on('change', arm);
-  configEvents.on('change', arm);
+  armGit();
+  settings.on('change', () => { arm(); armGit(); });
+  configEvents.on('change', () => { arm(); armGit(); });
 }

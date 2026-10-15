@@ -4,7 +4,8 @@
     "reviewer": ""
   },
   "poll": {
-    "intervalSeconds": 600
+    "intervalSeconds": 600,
+    "gitIntervalSeconds": 300
   },
   "project": {
     "repoPath": "",

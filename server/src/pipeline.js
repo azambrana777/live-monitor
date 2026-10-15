@@ -25,7 +25,7 @@ import {
 } from './workplan.js';
 import { withNudge } from './nudge.js';
 import {
-  deriveBranchName, createWorktree, hasCommits, pushBranch, findBranchesForIssue,
+  deriveBranchName, createWorktree, hasCommits, pushBranch, findBranchesForIssue, listAllBranches,
   isProjectWorktree, pendingWork, analyzeMerge, mergeBlockers, mergeMain, mergeInProgress, resolveRef,
   statusPaths, worktreePathFor, commitSubject, deleteLocalBranch,
   RepoStateError, classifyRepoState, isSafeBranchName,
@@ -1984,28 +1984,50 @@ export async function refreshChecks() {
   }
 }
 
-/** What the poll records so the card can show its two numbers. */
-export async function refreshBranchStatus(task) {
+/** Measures the branch once a chat turn has ended (no fetch); never throws. */
+export function refreshAfterChat(task) {
+  Promise.resolve()
+    .then(() => refreshGitDeps.refreshBranchStatus(task, { includeBusy: true }))
+    .catch((e) => store.addLog(task, 'git', `⚠️ could not measure the branch after the chat turn (${reasonOf(e)})`));
+}
+
+/** Re-stamping `branchStatus.at` alone wakes every open board; at most this often. */
+export const BRANCH_AT_TOUCH_MS = 30 * 1000;
+
+/**
+ * What the poll records so the card can show its two numbers.
+ *
+ * `includeBusy` measures even while the task is working or a chat is mid-turn:
+ * everything run here only reads (status, rev-list, diff, merge-tree), so the
+ * worst a moving target costs is a number one check stale. A task that is
+ * moving between machines is still skipped.
+ */
+export async function refreshBranchStatus(task, { includeBusy = false } = {}) {
+  if (task.moving) return;
   if (!task.branch || !(await isProjectWorktree(machineOf(task), task.worktreePath))) {
     if (task.branchStatus) { task.branchStatus = null; store.touch(task); }
     return;
   }
-  if (gitBusyReason(task)) return;   // measuring a moving target says nothing
+  const busy = gitBusyReason(task);
+  if (busy && !includeBusy) return;   // measuring a moving target says nothing
 
   const { dirty, unpushed, behind } = await pendingWork(machineOf(task), task.worktreePath, task.branch, { base: baseOf(task) });
+  const mergeStuck = await mergeInProgress(machineOf(task), task.worktreePath);
   let conflicts = [];
-  if (behind > 0) {
+  // A merge already under way owns the index: leave it alone while busy.
+  if (behind > 0 && !(busy && mergeStuck)) {
     const mainSha = await resolveRef(machineOf(task), task.worktreePath, `origin/${baseOf(task)}`);
     // Analysing touches nothing, so it is safe even here; only the merge waits.
     if (mainSha) conflicts = (await analyzeMerge(machineOf(task), task.worktreePath, mainSha)).conflicts;
   }
+  const now = new Date();
   const next = {
     behind: behind ?? 0,
     unpushed,
     dirty: dirty.length,
     conflicts: conflicts.length,
-    mergeStuck: await mergeInProgress(machineOf(task), task.worktreePath),
-    at: new Date().toISOString(),
+    mergeStuck,
+    at: now.toISOString(),
   };
   const prev = task.branchStatus;
   // Only touch the store when something actually changed: every touch rewrites
@@ -2013,7 +2035,70 @@ export async function refreshBranchStatus(task) {
   if (!prev || ['behind', 'unpushed', 'dirty', 'conflicts', 'mergeStuck'].some((k) => prev[k] !== next[k])) {
     task.branchStatus = next;
     store.touch(task);
+    return;
   }
+  // Same numbers: still record that they were just checked, so the card can
+  // say "checked N min ago", but wake the boards only now and then.
+  const lastAt = Date.parse(prev.at ?? '') || 0;
+  prev.at = next.at;
+  if (now.getTime() - lastAt >= BRANCH_AT_TOUCH_MS) store.touch(task);
+}
+
+/** Test seam for `refreshGitNow`. */
+export const refreshGitDeps = {
+  listAllBranches: (opts) => listAllBranches(opts),
+  refreshBranchStatus: (task, opts) => refreshBranchStatus(task, opts),
+  tasks: () => store.all(),
+};
+const REFRESH_CONCURRENCY = 4;
+const gitRefreshing = new Map();   // project -> in-flight promise
+
+/**
+ * Fetches each project's origin once and re-measures every task's branch, busy
+ * or not. Never throws: failures are logged and counted out.
+ *
+ * @returns {Promise<{tasks: number, fetched: number}>}
+ */
+export function refreshGitNow({ project = null, force = true } = {}) {
+  const key = project ?? '*';
+  // The all-projects sweep and a single project's one are different jobs.
+  const running = gitRefreshing.get(key);
+  if (running) return running;
+  const job = (async () => {
+    const result = { tasks: 0, fetched: 0 };
+    try {
+      const byProject = new Map();
+      for (const task of refreshGitDeps.tasks()) {
+        if (!task.branch || !task.worktreePath || task.unassigned || task.state === 'done' || task.moving) continue;
+        const pid = task.project;
+        if (!pid || (project && pid !== project)) continue;
+        if (!byProject.has(pid)) byProject.set(pid, []);
+        byProject.get(pid).push(task);
+      }
+      const gate = new Semaphore(() => REFRESH_CONCURRENCY);
+      await Promise.all([...byProject].map(async ([pid, tasks]) => {
+        try {
+          await refreshGitDeps.listAllBranches({ project: pid, force });
+          result.fetched++;
+        } catch (e) {
+          console.error(`refreshGitNow: fetch failed for ${pid}: ${reasonOf(e)}`);
+        }
+        await Promise.all(tasks.map((task) => gate.run(async () => {
+          try {
+            await refreshGitDeps.refreshBranchStatus(task, { includeBusy: true });
+            result.tasks++;
+          } catch (e) {
+            console.error(`refreshGitNow: ${task.id ?? '?'} failed: ${reasonOf(e)}`);
+          }
+        })));
+      }));
+    } catch (e) {
+      console.error(`refreshGitNow: ${reasonOf(e)}`);
+    }
+    return result;
+  })().finally(() => gitRefreshing.delete(key));
+  gitRefreshing.set(key, job);
+  return job;
 }
 
 /**
@@ -6987,6 +7072,7 @@ function onChatEvent(task, chat, live, ev) {
         chat.busy = false;
         chat.activity = null;
         store.touch(task);
+        refreshAfterChat(task);
       }
       return;
 
@@ -7445,6 +7531,8 @@ async function runTurn(task, chat, text, attachments = [], opts = {}) {
     // Outside the catch: the card has to stop looking busy even when the
     // machine that ran the turn is gone.
     store.touch(task);
+    // The turn's commits are the card's "unpushed": measure now, not at the poll.
+    refreshAfterChat(task);
 
     // What was typed mid-turn and found no opening becomes the next turn —
     // unless the board itself just closed this session to run a phase on the
