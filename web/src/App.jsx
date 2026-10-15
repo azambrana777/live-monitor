@@ -37,17 +37,18 @@ import { cardId, holderKey, holderTabEntry, keyOf, parseHolderTab, taskKey } fro
 import { parseQuery, matchTask, isExempt } from './boardFilter.js';
 import { useFileViewerScope } from './viewer/FileViewer.jsx';
 import { ago } from './time.js';
+import { finishedOutcome } from './pollProgress.js';
 import { useStrings } from './i18n/useStrings.js';
 import { fill, locale, plural } from './i18n/index.js';
 
 // How far a job has got: a broadcast or an answer never takes a job back.
-/** A poll that «runs» for longer than this is a dead one, not a slow one. */
+/** A poll that «runs» without progress for longer than this is a dead one, not a slow one. */
 const POLL_STALE_MS = 10 * 60 * 1000;
 
-/** Whether the server's `running` is a leftover: by `startedAt`, or by how long we have seen it true. */
+/** Whether the server's `running` is a leftover: no progress (or start) for POLL_STALE_MS; progress resets it. */
 export function pollRunningStale(info, seenSince, now) {
   if (!info?.running) return false;
-  const since = info.startedAt ?? seenSince;
+  const since = info.progressAt ?? info.startedAt ?? seenSince;
   return since != null && now - since > POLL_STALE_MS;
 }
 
@@ -140,7 +141,7 @@ export default function App() {
   const [importOpen, setImportOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [crView, setCrView] = useState(null);   // { issue, reviewId }
-  const [polling, setPolling] = useState(false);
+  const [pollStarting, setPollStarting] = useState(false); // between the click and the first answer
   const [refreshingGit, setRefreshingGit] = useState(false);
   // When `pollInfo.running` was first seen true (for servers that send no startedAt).
   const runningSince = useRef(null);
@@ -235,7 +236,7 @@ export default function App() {
         const prefs = msg.settings?.upgrade;
         if (prefs) writeUpgrade((u) => (u ? { ...u, settings: { ...(u.settings ?? {}), ...prefs } } : u));
       },
-      poll: (msg) => { setPollInfo(msg.poll); setFetchMsg(null); },
+      poll: (msg) => { setPollInfo(msg.poll); if (msg.poll?.running) setFetchMsg(null); },
       // By (project, issue), not by issue: #12 of one repository must not
       // replace #12 of the other. `project` rides inside the task.
       task: (msg) => {
@@ -825,26 +826,38 @@ export default function App() {
       .finally(() => setRefreshingGit(false));
   };
 
+  // The POST answers at once (202) and the cycle runs on in the server: its
+  // progress and its end arrive as `poll` messages.
   const runPoll = () => {
-    setPolling(true);
+    setPollStarting(true);
     api.pollNow()
-      .then((r) => {
-        if (r.poll) setPollInfo(r.poll);
-        setFetchMsg({ tasks: r.tasks || 0, changeRequests: r.changeRequests || 0 });
-      })
+      .then((r) => { if (r.poll) setPollInfo(r.poll); })
       .catch((e) => setFetchMsg({ error: e.timeout ? t.topbar.bar.timeout : e.message }))
-      .finally(() => setPolling(false));
+      .finally(() => setPollStarting(false));
+  };
+  const cancelPoll = () => {
+    api.cancelPoll()
+      .then((r) => { if (r.poll) setPollInfo(r.poll); })
+      .catch((e) => setFetchMsg({ error: e.timeout ? t.topbar.bar.timeout : e.message }));
   };
 
-  // A server that says «running» for ages is stale (its poll died): do not spin forever.
+  // A server that says «running» with no progress for ages is stale (its poll died): do not spin forever.
   const nowTick = useStaleTick();
   if (!pollInfo.running) runningSince.current = null;
   else if (runningSince.current == null) runningSince.current = Date.now();
   const serverRunning = pollInfo.running && !pollRunningStale(pollInfo, runningSince.current, nowTick);
-  const buscando = polling || serverRunning;
-  // The result of the last manual search is kept as numbers and said here, so a
+  const buscando = pollStarting || serverRunning;
+  // When a cycle ends (running true -> false) its result is said once, from `last`.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    const out = finishedOutcome(wasRunning.current, pollInfo);
+    wasRunning.current = Boolean(pollInfo.running);
+    if (out) setFetchMsg(out);
+  }, [pollInfo]);
+  // The result of the last search is kept as numbers and said here, so a
   // language chosen afterwards still reads it.
-  const fetchText = !fetchMsg ? null : fetchMsg.error !== undefined ? fill(t.app.poll.error, { message: fetchMsg.error })
+  const fetchText = !fetchMsg ? null : fetchMsg.cancelled ? t.topbar.poll.cancelled
+    : fetchMsg.error !== undefined ? fill(t.app.poll.error, { message: fetchMsg.error })
     : [fetchMsg.tasks && plural(fetchMsg.tasks, t.app.poll.news), fetchMsg.changeRequests && plural(fetchMsg.changeRequests, t.app.poll.crs)]
       .filter(Boolean).join(' · ') || t.app.poll.nothing;
   const lastPollShort = pollInfo.lastPollAt ? ago(pollInfo.lastPollAt) : t.app.poll.never;
@@ -978,7 +991,7 @@ export default function App() {
         }}
         machines={machines} machineStatus={machineStatus} onOpenMetrics={() => setMetricsOpen(true)}
         gitRefresh={{ busy: refreshingGit, run: runGitRefresh }}
-        poll={{ busy: buscando, text: lastPollText, short: lastPollShort, msg: fetchText, run: runPoll }}
+        poll={{ busy: buscando, text: lastPollText, short: lastPollShort, msg: fetchText, run: runPoll, info: pollInfo, cancel: cancelPoll }}
         query={query} setQuery={setQuery} searchRef={searchRef}
         upgradeChip={upgradeChipNow} onOpenUpgrade={() => setUpgradeDialog(true)} connected={connected}
       />

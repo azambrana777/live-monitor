@@ -61,7 +61,7 @@ const ALLOWLIST = {
   'prompts.js': [2, 'import + repoPathFor comparison: documented semantics of the default project'],
   'prompt-invariants.js': [2, 'import + documented "no project given means the default" constant'],
   'files.js': [5, 'import + allowedRoots comparison + legacy chat task fallback + legacy bare-issue route + comparison'],
-  'pipeline.js': [3, 'import + legacy rows without project in the PR-checks sweep (two readers)'],
+  'pipeline.js': [2, 'import + legacy rows without project in the PR-checks sweep (one reader)'],
   'index.js': [10, 'import + route layer: legacy clients (bare issue, /api/preview), board-wide tuning, empty-registry fallback, legacy rows'],
 };
 

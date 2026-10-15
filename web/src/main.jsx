@@ -25,6 +25,7 @@ import './styles/dialogs-c.css';
 import './styles/publish.css';
 import './styles/plugins.css';
 import './styles/topbar.css';
+import './styles/poll-progress.css';
 import './styles/settings-menu.css';
 import './styles/more-menu.css';
 import './styles/projects.css';

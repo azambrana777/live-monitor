@@ -289,8 +289,8 @@ button.tb-chip:hover { background: var(--tint-neutral-hover); }
     z-index: 1;
   }
   .tb-poll {
-    --btn-h: 34px;
-    width: 34px;
+    --btn-h: 44px;
+    width: 44px;
     padding: 0;
     justify-content: center;
   }

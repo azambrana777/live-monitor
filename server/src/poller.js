@@ -12,6 +12,7 @@ import {
 } from './pipeline.js';
 import { findManualKeyword, shouldAskAboutMode } from './mode.js';
 import { evaluateQuota } from './quota.js';
+import { Semaphore } from './exec.js';
 import { refreshStackHealth } from './stack.js';
 
 /**
@@ -244,15 +245,32 @@ let inFlight = null;
 let startedAt = null;
 let current = null;
 let lastPollAt = null;
+/** What the last finished cycle found; null before any. */
+let lastResult = null;
+
+/** The phases of a cycle, in order; `stepIndex` is the 1-based position here. */
+export const POLL_STEPS = ['listing', 'sweep', 'fetch', 'classify', 'branches', 'checks', 'crs'];
+const idleProgress = () => ({ step: null, stepIndex: 0, stepCount: POLL_STEPS.length, done: 0, total: 0, project: null, progressAt: null });
+let progress = idleProgress();
 
 /** A cycle running longer than this is abandoned from the flag's point of view. */
 const WATCHDOG_MS = 10 * 60_000;
-const hooks = { watchdogMs: WATCHDOG_MS, runCycle: null };
+/** Inside a loop the 'poll' event goes out at most this often (a trailing emit keeps the final count). */
+const EMIT_THROTTLE_MS = 1_000;
+const hooks = { watchdogMs: WATCHDOG_MS, runCycle: null, steps: {}, throttleMs: EMIT_THROTTLE_MS };
 
-/** Test seam: inject the watchdog timeout and/or the cycle body. Call with no argument to reset. */
-export function setPollTestHooks({ watchdogMs, runCycle } = {}) {
+/**
+ * Test seam: inject the watchdog timeout, the cycle body, replacements for the
+ * pieces of a cycle (`steps`: pollProject, sweepClosedIssues, listAllBranches,
+ * refreshClassification, refreshBranchStatus, refreshStackHealth, refreshChecks,
+ * checkChangeRequests, tick, evaluateQuota, listTasks) and the emit throttle.
+ * Call with no argument to reset.
+ */
+export function setPollTestHooks({ watchdogMs, runCycle, steps, throttleMs } = {}) {
   hooks.watchdogMs = watchdogMs ?? WATCHDOG_MS;
   hooks.runCycle = runCycle ?? null;
+  hooks.steps = steps ?? {};
+  hooks.throttleMs = throttleMs ?? EMIT_THROTTLE_MS;
 }
 
 /**
@@ -277,7 +295,43 @@ const DUE_SLACK_MS = 1_000;
     from the real thing instead of from the page's last reload. */
 export const pollEvents = new EventEmitter();
 
-export const pollStatus = () => ({ lastPollAt, running: Boolean(inFlight), startedAt: inFlight ? startedAt : null });
+export const pollStatus = () => ({
+  lastPollAt,
+  running: Boolean(inFlight),
+  startedAt: inFlight ? startedAt : null,
+  ...progress,
+  cancelling: Boolean(inFlight && current?.cancelled),
+  last: lastResult,
+});
+
+let lastEmitAt = 0;
+let trailing = null;
+
+function emitNow() {
+  if (trailing) { clearTimeout(trailing); trailing = null; }
+  lastEmitAt = Date.now();
+  pollEvents.emit('poll', pollStatus());
+}
+
+/** A phase starts: reset the counters and announce it at once. Ignored for a token that is no longer current. */
+function progressStep(token, step, total) {
+  if (current !== token) return;
+  if (trailing) emitNow();   // the last count of the previous phase is not lost
+  progress = { step, stepIndex: POLL_STEPS.indexOf(step) + 1, stepCount: POLL_STEPS.length, done: 0, total, project: null, progressAt: Date.now() };
+  emitNow();
+}
+
+/** One project/task finished: counted at once, announced at most once per throttle window, with a trailing emit. */
+function progressBump(token, project = null) {
+  if (current !== token) return;
+  progress = { ...progress, done: progress.done + 1, project, progressAt: Date.now() };
+  const wait = hooks.throttleMs - (Date.now() - lastEmitAt);
+  if (wait <= 0) { emitNow(); return; }
+  if (!trailing) {
+    trailing = setTimeout(emitNow, wait);
+    trailing.unref?.();
+  }
+}
 
 /**
  * Is it this project's turn? A project never polled is always due.
@@ -293,12 +347,21 @@ function isDue(project, now) {
 }
 
 /** Clears the running flag if `token` is still the current cycle, then announces the final state. */
-function release(token) {
+function release(token, result) {
   if (current !== token) return;
   current = null;
   inFlight = null;
   startedAt = null;
-  pollEvents.emit('poll', pollStatus());
+  if (trailing) emitNow();
+  progress = idleProgress();
+  lastResult = {
+    tasks: result?.tasks ?? 0,
+    changeRequests: result?.changeRequests ?? 0,
+    swept: result?.swept ?? 0,
+    error: result?.error ?? null,
+    finishedAt: new Date().toISOString(),
+  };
+  emitNow();
 }
 
 /**
@@ -313,32 +376,61 @@ function release(token) {
  *   projects whose own interval has elapsed; a click polls every project,
  *   because "Buscar ahora" means now and means all of them.
  */
-export function pollNow({ scheduled = false } = {}) {
-  if (inFlight) return inFlight;
+export function pollNow(options) {
+  return startPoll(options).promise;
+}
+
+/**
+ * Starts a cycle unless one is running. `started` says which of the two
+ * happened; `promise` settles when the cycle ends either way.
+ *
+ * @param {Object} [options] same as {@link pollNow}
+ */
+export function startPoll({ scheduled = false } = {}) {
+  if (inFlight) return { started: false, promise: inFlight };
   const all = listProjects();
   const now = Date.now();
   const due = scheduled ? all.filter((p) => isDue(p, now)) : all;
   for (const project of due) lastPolledAt.set(project.id, now);
-  const token = {};
+  // One token per cycle: cancelling or abandoning this one can never reach the next.
+  const token = { cancelled: false };
   const timeout = new Promise((resolve) => {
     token.timer = setTimeout(() => {
       if (current !== token) return;
       console.warn(`poll: the cycle ran over ${Math.round(hooks.watchdogMs / 1000)} s; abandoning it so a new one can start`);
-      release(token);
-      resolve({ error: 'poll watchdog: the cycle was abandoned' });
+      // The abandoned cycle must stop starting work, or it would overlap the next one.
+      token.cancelled = true;
+      const result = { error: 'poll watchdog: the cycle was abandoned' };
+      release(token, result);
+      resolve(result);
     }, hooks.watchdogMs);
     token.timer.unref?.();
   });
   current = token;
   startedAt = Date.now();
-  const promise = Promise.race([(hooks.runCycle ?? runCycle)(due), timeout])
-    .finally(() => { clearTimeout(token.timer); release(token); });
+  progress = idleProgress();
+  const body = Promise.resolve().then(() => (hooks.runCycle ?? runCycle)(due, token));
+  const promise = Promise.race([body, timeout])
+    .then((result) => { clearTimeout(token.timer); release(token, result); return result; },
+      (e) => { clearTimeout(token.timer); release(token, { error: e?.message ?? String(e) }); throw e; });
   inFlight = promise;
   // Announced at the start, so every open board shows the cycle running and
   // not just the tab whose button started it. The end is announced by
   // `release`, after the flag is cleared.
-  pollEvents.emit('poll', pollStatus());
-  return inFlight;
+  emitNow();
+  return { started: true, promise };
+}
+
+/**
+ * Asks the running cycle to stop: no new project or task is started, the ones
+ * in flight finish, and the cycle then ends. A no-op when nothing runs.
+ */
+export function cancelPoll() {
+  if (inFlight && current && !current.cancelled) {
+    current.cancelled = true;
+    emitNow();
+  }
+  return pollStatus();
 }
 
 /**
@@ -379,42 +471,80 @@ async function pollProject(project, found, seen) {
   }
 }
 
-async function runCycle(due) {
+/** The pieces of a cycle a test may replace; anything left out is the real one. */
+const realSteps = () => ({
+  pollProject, sweepClosedIssues, listAllBranches, refreshClassification, refreshBranchStatus,
+  refreshStackHealth, refreshChecks, checkChangeRequests, tick, evaluateQuota,
+  listTasks: (polling) => store.all().filter((t) => polling.has(t.project) && !t.unassigned),
+});
+
+/** Concurrency of the per-task phases, and of the per-project fetches. */
+const TASK_CONCURRENCY = 4;
+const FETCH_CONCURRENCY = 3;
+
+/**
+ * Runs `fn` over `items` behind `sem`. Every item handles its own errors; once
+ * the token is cancelled, items that have not started are skipped and the ones
+ * in flight finish.
+ */
+async function forEachLimited(items, sem, token, fn) {
+  await Promise.all(items.map((item) => sem.run(async () => {
+    if (token.cancelled) return;
+    await fn(item);
+  })));
+}
+
+/**
+ * One cycle. `token` is this cycle's own object: setting `token.cancelled`
+ * makes it stop starting work, and only the token that is still the current
+ * one may write progress.
+ */
+export async function runCycle(due, token = {}) {
+  const S = { ...realSteps(), ...hooks.steps };
   const found = { tasks: 0, changeRequests: 0, swept: 0 };
   const errors = [];
-  // What each project's listings answered for, per project and owned here so
-  // that a project whose `pollProject` threw still has an (empty) set: its
-  // sweep then asks about every task it has, which is exactly right — a listing
-  // that failed answered for nothing.
+  // What each project's listings answered for; a project whose `pollProject`
+  // threw still has an (empty) set, so its sweep asks about every task it has.
   const seen = new Map(due.map((p) => [p.id, new Set()]));
-  // The projects this round is about. Every per-task sweep below is filtered
-  // by it, so a project that polls every 30 minutes is not re-classified,
-  // re-measured and re-read every 5 because another project is quicker.
+  // Every per-task step is filtered by the projects this round is about.
+  // Tasks reassigned away are left out of them (they would only spend `gh`).
   const polling = new Set(due.map((p) => p.id));
-  // Tasks reassigned away are left out of every per-task refresh below (they
-  // would only spend `gh`); pollProject and the sweep still see them so a
-  // reassign-back restores them.
-  const mine = () => store.all().filter((t) => polling.has(t.project) && !t.unassigned);
+  const mine = () => S.listTasks(polling);
+  const taskSem = new Semaphore(() => TASK_CONCURRENCY);
+  const fetchSem = new Semaphore(() => FETCH_CONCURRENCY);
+  const cancelled = () => Boolean(token.cancelled);
+  const finish = () => {
+    if (cancelled()) {
+      found.error = 'cancelled';
+    } else {
+      if (errors.length) found.error = errors.join('; ');
+      lastPollAt = new Date().toISOString();
+    }
+    return found;
+  };
 
+  // 1. The listings, one project at a time (each is two `gh` calls already).
+  progressStep(token, 'listing', due.length);
   for (const project of due) {
+    if (cancelled()) return finish();
     try {
-      await pollProject(project, found, seen.get(project.id));
+      await S.pollProject(project, found, seen.get(project.id));
     } catch (e) {
       console.error(`[poll] ${project.id}: ${e.message}`);
       errors.push(`${project.id}: ${e.message}`);
     }
+    progressBump(token, project.id);
   }
 
-  // What the listings could not say, asked by number. Its own loop with its own
-  // try/catch, and not inside `pollProject`: this is the one call that does not
-  // depend on the listing, so a failed listing must not skip the sweep and a
-  // failed sweep must not discard a fold that succeeded. Before the
-  // classification, never after: the flag flipped here has to be acted on in
-  // the SAME cycle, so a task whose issue somebody closed reaches «Completadas»
-  // on the poll that discovers it and not on the next one.
+  // 2. What the listings could not say, asked by number. Its own try/catch, so
+  // a failed listing does not skip it and a failed sweep does not discard a
+  // fold. Before the classification: the flag flipped here is acted on in the
+  // SAME cycle.
+  progressStep(token, 'sweep', due.length);
   for (const project of due) {
+    if (cancelled()) return finish();
     try {
-      const counts = await sweepClosedIssues(project, seen.get(project.id));
+      const counts = await S.sweepClosedIssues(project, seen.get(project.id));
       found.swept += counts.flipped + counts.settled;
       sweepFailures.delete(project.id);
     } catch (e) {
@@ -426,84 +556,94 @@ async function runCycle(due) {
       }
       errors.push(`${project.id}: ${e.message}`);
     }
+    progressBump(token, project.id);
   }
 
-  // Classification hits the network per task; run it one at a time so a
-  // long backlog doesn't fire dozens of gh processes at once.
-  for (const task of mine()) {
+  // 3. One forced fetch per project, BEFORE the classification so that it
+  // reads a warm branch cache. Asked for explicitly rather than relied upon as
+  // a side effect: a cycle where every task is busy would skip it, and the
+  // branch status would be measured against a stale origin/main.
+  if (cancelled()) return finish();
+  progressStep(token, 'fetch', due.length);
+  await forEachLimited(due, fetchSem, token, async (project) => {
     try {
-      await refreshClassification(task);
-    } catch (e) {
-      store.addLog(task, 'guard', `⚠️ could not reclassify: ${e.message}`);
-    }
-  }
-
-  // How each branch stands against main, and how each PR's CI is doing. The
-  // fetch is asked for explicitly rather than relied upon as a side effect of
-  // classification: a cycle where every task is busy would skip it, and then
-  // "3 commits behind" would be measured against a stale origin/main. One
-  // fetch per project: each has its own checkout, and hfs's branches say
-  // nothing about the other's.
-  for (const project of due) {
-    try {
-      await listAllBranches({ project: project.id });
+      await S.listAllBranches({ project: project.id, force: true });
     } catch (e) {
       console.error(`[poll] ${project.id}: no se pudieron listar las ramas: ${e.message}`);
       errors.push(`${project.id}: ${e.message}`);
     }
-  }
-  for (const task of mine()) {
+    progressBump(token, project.id);
+  });
+
+  // 4. Classification, per task, behind the shared bound.
+  if (cancelled()) return finish();
+  let tasks = mine();
+  progressStep(token, 'classify', tasks.length);
+  await forEachLimited(tasks, taskSem, token, async (task) => {
     try {
-      await refreshBranchStatus(task);
+      await S.refreshClassification(task);
+    } catch (e) {
+      store.addLog(task, 'guard', `⚠️ could not reclassify: ${e.message}`);
+    }
+    progressBump(token, task.project);
+  });
+
+  // 5. How each branch stands against main; then the stacks the board believes
+  // are up, asked whether they are (a server can stop answering without its
+  // exit ever reaching the board).
+  if (cancelled()) return finish();
+  tasks = mine();
+  progressStep(token, 'branches', tasks.length);
+  await forEachLimited(tasks, taskSem, token, async (task) => {
+    try {
+      await S.refreshBranchStatus(task);
     } catch (e) {
       store.addLog(task, 'merge', `⚠️ could not check the branch state: ${e.message}`);
     }
-  }
-  // Stacks the board believes are up, asked whether they are: a server can
-  // stop answering without its exit ever reaching the board.
-  for (const task of mine()) {
-    if (task.stack?.status !== 'running') continue;
+    progressBump(token, task.project);
+  });
+  await forEachLimited(tasks.filter((t) => t.stack?.status === 'running'), taskSem, token, async (task) => {
     try {
-      await refreshStackHealth(task);
+      await S.refreshStackHealth(task);
     } catch (e) {
       store.addLog(task, 'stack', `⚠️ could not check the stack: ${e.message}`);
     }
-  }
-  // After the branches, never before: a PR's checks describe the last pushed
-  // commit, so knowing whether anything is still local is what says if that
-  // green light is talking about your code at all.
+  });
+
+  // 6. After the branches, never before: a PR's checks describe the last
+  // pushed commit, so knowing whether anything is still local is what says if
+  // that green light is talking about your code at all.
+  if (cancelled()) return finish();
+  progressStep(token, 'checks', due.length);
   try {
-    await refreshChecks();
+    await S.refreshChecks({ projects: due.map((p) => p.id) });
   } catch (e) {
     console.error(`[poll] no se pudieron mirar los checks: ${e.message}`);
     errors.push(e.message);
   }
+  for (const p of due) progressBump(token, p.id);
 
-  // Change requests, in the same cycle: a task waiting for approval may have
-  // had changes requested on its PR since the last look.
-  for (const task of mine()) {
+  // 7. Change requests: a task waiting for approval may have had changes
+  // requested on its PR since the last look.
+  if (cancelled()) return finish();
+  tasks = mine();
+  progressStep(token, 'crs', tasks.length);
+  await forEachLimited(tasks, taskSem, token, async (task) => {
     try {
-      found.changeRequests += await checkChangeRequests(task);
+      found.changeRequests += await S.checkChangeRequests(task);
     } catch (e) {
       store.addLog(task, 'cr', `⚠️ could not read the PR reviews: ${e.message}`);
     }
-  }
+    progressBump(token, task.project);
+  });
 
-  // Both of these are local and account-wide: the task cap and the quota hold
-  // belong to the board, not to a project. They run even after a project's
-  // listing failed — one repository GitHub cannot answer for must not stop the
+  // Both are local and account-wide: the task cap and the quota hold belong to
+  // the board, not to a project. They run even after a failed listing or a
+  // cancellation, so one repository GitHub cannot answer for does not stop the
   // other's queued task from starting.
-  tick();
-  // A free look at the quota hold: the cycle already runs on its own timer,
-  // so a board that slept through the 30 s clock still hears about the
-  // window reopening here.
-  evaluateQuota();
-
-  if (errors.length) found.error = errors.join('; ');
-  // No emit here: the cycle is still flagged running at this point, and the
-  // final state is announced by `release` once the flag is cleared.
-  lastPollAt = new Date().toISOString();
-  return found;
+  S.tick();
+  S.evaluateQuota();
+  return finish();
 }
 
 /**

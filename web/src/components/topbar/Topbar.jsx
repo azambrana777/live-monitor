@@ -6,6 +6,7 @@ import LoginChips from '../LoginChips.jsx';
 import PluginChips from '../PluginChips.jsx';
 import SettingsMenu from './SettingsMenu.jsx';
 import MoreMenu from './MoreMenu.jsx';
+import PollProgress from './PollProgress.jsx';
 import { useStrings } from '../../i18n/useStrings.js';
 import { fill } from '../../i18n/index.js';
 
@@ -34,7 +35,7 @@ const shortPoll = (poll) => poll.short ?? poll.text.replace(/^[^:\d]*:\s*/, '');
  * @param {{ name: string, kind?: string }[]} props.machines
  * @param {Record<string, object>} props.machineStatus reachability probed apart, by machine name
  * @param {() => void} props.onOpenMetrics
- * @param {{ busy: boolean, text: string, msg: string|null, run: () => void }} props.poll
+ * @param {{ busy: boolean, text: string, short?: string, msg: string|null, run: () => void, info?: object|null, cancel?: () => void }} props.poll busy = a cycle runs; the button is never disabled
  * @param {{ busy: boolean, run: () => void }} [props.gitRefresh] refresh the git state of the active tasks
  * @param {string} props.query
  * @param {(q: string) => void} props.setQuery
@@ -110,13 +111,8 @@ export default function Topbar({
                 onClick={() => { setQuery(''); searchRef.current?.focus(); }}><Icon name="x"/></button>
             ) : <Kbd>/</Kbd>}
           </label>
-          <button type="button" className="btn btn-ghost tb-poll" onClick={poll.run} disabled={poll.busy}
-            aria-busy={poll.busy}
-            aria-label={fill(t.topbar.bar.pollNow, { text: poll.text })}
-            title={fill(t.topbar.bar.pollTitle, { text: poll.text })}>
-            {poll.busy ? <span className="tb-spin" aria-hidden="true"><Icon name="refresh"/></span> : <Icon name="refresh"/>}
-            <span className="tb-poll-text">{poll.busy ? t.topbar.bar.polling : shortPoll(poll)}</span>
-          </button>
+          <PollProgress running={poll.busy} info={poll.info ?? null} idleText={poll.text} idleShort={shortPoll(poll)}
+            onStart={poll.run} onCancel={poll.cancel} />
           {gitRefresh && (
             <button type="button" className="btn btn-ghost btn-icon tb-git" onClick={gitRefresh.run} disabled={gitRefresh.busy}
               aria-busy={gitRefresh.busy}

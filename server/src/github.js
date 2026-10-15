@@ -2,6 +2,7 @@ import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { run } from './exec.js';
+import { shared } from './inflight.js';
 import { config } from './config.js';
 import { assertPublishable } from './language.js';
 import { PR_TITLE_MAX } from './prtitle.js';
@@ -200,6 +201,9 @@ export function forgetRepoCache(projectId) {
   else repoCache.delete(projectId);
 }
 
+// `run`'s own default is ten minutes: one hung `gh` would hold a whole poll.
+const GH_TIMEOUT_MS = 60_000;
+
 async function issueList(state, limit, projectId) {
   const r = await run('gh', [
     'issue', 'list', '-R', repo(projectId),
@@ -207,7 +211,7 @@ async function issueList(state, limit, projectId) {
     '--state', state,
     '--json', 'number,title,labels,url,closed,assignees',
     '--limit', String(limit),
-  ]);
+  ], { timeoutMs: GH_TIMEOUT_MS });
   if (!r.ok) throw new Error(`gh issue list (${state}) failed: ${r.stderr}`);
   return JSON.parse(r.stdout).map((i) => ({
     number: i.number,
@@ -397,7 +401,7 @@ export async function linkedPullRequests(number, projectId) {
   const r = await run('gh', [
     'issue', 'view', String(number), '-R', repo(projectId),
     '--json', 'closedByPullRequestsReferences',
-  ]);
+  ], { timeoutMs: GH_TIMEOUT_MS });
   if (!r.ok) return [];
   let refs;
   try {
@@ -440,15 +444,23 @@ const PR_TTL_MS = 60_000;
 // are asking the same question.
 const prCache = new Map();
 
+const prInflight = new Map();   // repo -> in-flight `gh pr list`
+
 async function allPullRequests(projectId) {
   requireProject(projectId, 'allPullRequests');
   const r = repo(projectId);
   const cached = prCache.get(r);
   if (cached && Date.now() - cached.at < PR_TTL_MS) return cached.list;
+  // Concurrent misses (classification runs several tasks at once) share one call.
+  return shared(prInflight, r, () => fetchAllPullRequests(r));
+}
+
+async function fetchAllPullRequests(r) {
+  const cached = prCache.get(r);
   const result = await run('gh', [
     'pr', 'list', '-R', r, '--state', 'all', '--limit', '200',
     '--json', 'number,title,headRefName,url,state,isDraft,createdAt,mergedAt,closedAt',
-  ]);
+  ], { timeoutMs: 2 * 60 * 1000 });
   if (!result.ok) return cached?.list ?? [];
   try {
     const list = JSON.parse(result.stdout);
@@ -528,7 +540,7 @@ export async function prsForBranch(branch, { cache = false, project } = {}) {
   const r = await run('gh', [
     'pr', 'list', '-R', repo(project), '--head', bare, '--state', 'all', '--limit', '30',
     '--json', 'number,url,title,state,isDraft,createdAt,mergedAt,closedAt',
-  ]);
+  ], { timeoutMs: GH_TIMEOUT_MS });
   if (!r.ok) {
     const stale = cache && prBranchCache.get(key);
     if (stale) return stale.list.map((p) => ({ ...p }));
@@ -625,7 +637,7 @@ export async function issueReopenInfo(issue, projectId) {
         nodes { ... on ReopenedEvent { createdAt } }
       }
     } } }`;
-  const r = await run('gh', ['api', 'graphql', '-f', `query=${query}`]);
+  const r = await run('gh', ['api', 'graphql', '-f', `query=${query}`], { timeoutMs: GH_TIMEOUT_MS });
   if (!r.ok) throw new Error(`gh api graphql (reopened event of #${issue}) failed: ${r.stderr}`);
   let data;
   try {
@@ -901,8 +913,8 @@ export async function getChangeRequests(prNumber, projectId) {
   // `pull_request_review_id`, so the two never match and every change request
   // would silently come back with no comments at all.
   const [meta, reviews] = await Promise.all([
-    run('gh', ['pr', 'view', String(prNumber), '-R', repo(projectId), '--json', 'reviewDecision,headRefOid']),
-    run('gh', ['api', `repos/${repo(projectId)}/pulls/${prNumber}/reviews`, '--paginate']),
+    run('gh', ['pr', 'view', String(prNumber), '-R', repo(projectId), '--json', 'reviewDecision,headRefOid'], { timeoutMs: GH_TIMEOUT_MS }),
+    run('gh', ['api', `repos/${repo(projectId)}/pulls/${prNumber}/reviews`, '--paginate'], { timeoutMs: GH_TIMEOUT_MS }),
   ]);
   if (!meta.ok) throw new Error(`gh pr view failed: ${meta.stderr}`);
   if (!reviews.ok) throw new Error(`gh api pulls/${prNumber}/reviews failed: ${reviews.stderr}`);

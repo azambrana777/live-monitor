@@ -458,6 +458,16 @@ const quietChecks = new Map();   // task key -> ms of the last classification
 const isQuiet = (task) => task.state === 'done' && task.issueClosed && Boolean(task.classified);
 
 /**
+ * When this task was last classified: the persisted `classifiedAt` (survives a
+ * restart) or the in-memory map, whichever is newer.
+ */
+export function lastClassifiedAt(task) {
+  return Math.max(Number(task.classifiedAt) || 0, quietChecks.get(keyOf(task)) ?? 0);
+}
+/** Whether a quiet task was classified recently enough not to be asked about. */
+export const quietRecently = (task, now = Date.now()) => isQuiet(task) && now - lastClassifiedAt(task) < QUIET_RECHECK_MS;
+
+/**
  * The states a closed issue settles by itself, and deliberately NOT
  * `CLASSIFIABLE`: `error` and `plan_ready` are here precisely because they are
  * not classifiable — a classification would hand them `verdict.state` on every
@@ -616,7 +626,7 @@ export async function refreshClassification(task, steps = CLASSIFY_STEPS) {
   // The say-so to start covers one run; honoured while that run is pending,
   // dropped below once it is over (see `keepsForced`).
   if (task.forced && keepsForced(task)) return;
-  if (isQuiet(task) && Date.now() - (quietChecks.get(key) ?? 0) < QUIET_RECHECK_MS) return;
+  if (quietRecently(task)) return;
   const stateBefore = task.state;
 
   // A PR the board holds open is asked about live: it is what «Listo para
@@ -633,7 +643,11 @@ export async function refreshClassification(task, steps = CLASSIFY_STEPS) {
   const withdrawn = Boolean(task.reopenedAt && task.issueClosed);
   const verdict = classifyPrs(prs, existing.branches, { since: withdrawn ? null : task.cycleStartedAt });
   task.classified = true;
-  quietChecks.set(key, Date.now());
+  // Persisted on the task (it is saved by the touches below, never touched on
+  // its own) so a restart does not re-ask about every finished card.
+  const classifiedNow = Date.now();
+  task.classifiedAt = classifiedNow;
+  quietChecks.set(key, classifiedNow);
 
   const before = JSON.stringify([task.prs ?? [], task.prNumber ?? null, task.prUrl ?? null, task.existingWork ?? null, Boolean(task.forced), task.reopenedAt ?? null]);
   task.forced = false;
@@ -1941,6 +1955,9 @@ export async function pushNow(issue) {
   return pushed;
 }
 
+/** Test seam for `refreshChecks`. */
+export const refreshChecksDeps = { checksForOpenPrs: ({ project }) => checksForOpenPrs({ project }) };
+
 /**
  * The CI state of every open PR, spread over the tasks that own them.
  *
@@ -1948,29 +1965,41 @@ export async function pushNow(issue) {
  * `done`, gets no light at all. Its CI describes something that is over, and a
  * strip of completed cards glowing green forever teaches you to ignore the
  * colour everywhere else.
+ *
+ * `projects` (project ids) limits the sweep to those projects, and only the ones
+ * with a task that can have a light; the others keep what they had.
  */
-export async function refreshChecks() {
+export async function refreshChecks({ projects } = {}) {
+  const projectOfRow = (t) => t.project ?? DEFAULT_PROJECT_ID; // allowlisted: legacy row without project
   // One sweep per project, not one for the board. `checksForOpenPrs` lists the
   // open PRs of ONE repository and keys them by number — and numbers are per
   // repository, so #12 of `app-b` and #12 of `hfs` are different pull
   // requests. A single map would light a card with a stranger's CI.
   const tasks = store.all();
   const byProject = new Map();
-  for (const project of new Set(tasks.map((t) => t.project ?? DEFAULT_PROJECT_ID))) { // allowlisted: legacy row without project
+  const only = Array.isArray(projects) ? new Set(projects) : null;
+  // With a project list, a project is only asked when a task there can have a
+  // light: not unassigned, not done, with a PR.
+  const wanted = (project) => !only || (only.has(project) && tasks.some((t) =>
+    projectOfRow(t) === project && !t.unassigned && t.state !== 'done' && t.prNumber)); // allowlisted: legacy row without project
+  for (const project of new Set(tasks.map(projectOfRow))) {
+    if (!wanted(project)) continue;
     // A project whose repository cannot be resolved must not blank out the
     // others: it gets an empty answer and the remaining sweeps still run.
-    byProject.set(project, await checksForOpenPrs({ project }).catch(() => new Map()));
+    byProject.set(project, await refreshChecksDeps.checksForOpenPrs({ project }).catch(() => new Map()));
   }
   for (const task of tasks) {
     // Reassigned away: its card is on the way out, and its CI is not worth a read.
     if (task.unassigned) continue;
+    // Not swept this time: leave its light as it was.
+    if (only && !byProject.has(projectOfRow(task))) continue;
     // The cycle's PR only. The newest PR on record used to stand in for a
     // missing one, and a merged PR from an earlier cycle is not what the card
     // is waiting on.
     const number = task.prNumber ?? null;
     const found = task.state === 'done' || !number
       ? null
-      : byProject.get(task.project ?? DEFAULT_PROJECT_ID)?.get(number) ?? null;  // allowlisted: legacy row without project
+      : byProject.get(projectOfRow(task))?.get(number) ?? null;
     // The rollup belongs to the last pushed commit; with work still local, a
     // green light would be talking about somebody else's code.
     const checks = found
@@ -2002,8 +2031,10 @@ export const BRANCH_AT_TOUCH_MS = 30 * 1000;
  * worst a moving target costs is a number one check stale. A task that is
  * moving between machines is still skipped.
  */
-export async function refreshBranchStatus(task, { includeBusy = false } = {}) {
+export async function refreshBranchStatus(task, { includeBusy = false, force = false } = {}) {
   if (task.moving) return;
+  // Finished work does not move: keep whatever was measured last.
+  if (task.state === 'done' && !includeBusy && !force) return;
   if (!task.branch || !(await isProjectWorktree(machineOf(task), task.worktreePath))) {
     if (task.branchStatus) { task.branchStatus = null; store.touch(task); }
     return;
