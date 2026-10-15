@@ -19,7 +19,7 @@ import {
   answerTaskPending, setApprovePlan, decideTaskPlan, approvePlanWanted,
   fixGapsWanted, setFixGaps, setDesign,
   backfillAgent, agentCalls, stopBackground, startTask, isUserRun, isRunning,
-  draftIssueClosing, discardIssueClosing, closeIssueWithoutPr, renameChat, bootstrapRepo, changeBaseBranch,
+  draftIssueClosing, discardIssueClosing, closeIssueWithoutPr, renameChat, bootstrapRepo, changeBaseBranch, refreshGitNow,
 } from './pipeline.js';
 import { holderKey, getHolder, getHolderByKey, allHolders, holderMachines } from './projectchats.js';
 import { registerIssueDraftRoutes } from './issuedraft.js';
@@ -1064,6 +1064,19 @@ app.post('/api/projects/:project/tasks/:issue/mode', withTask((task, req, res) =
 app.post('/api/poll', async (_req, res) => {
   try {
     res.json({ ...(await pollNow()), poll: pollStatus() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Re-reads git state (fetch + branch status) now; body `{project}` limits it to one project. */
+app.post('/api/git/refresh', async (req, res) => {
+  const project = req.body?.project ?? null;
+  if (project !== null && !listProjects().some((p) => p.id === project)) {
+    return res.status(400).json({ error: `unknown project: ${JSON.stringify(project)}` });
+  }
+  try {
+    res.json({ ok: true, ...(await refreshGitNow({ project, force: true })) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

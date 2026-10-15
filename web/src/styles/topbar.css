@@ -126,7 +126,8 @@
   font-weight: 400;
   white-space: nowrap;
 }
-.tb-poll[aria-busy="true"] { cursor: progress; }
+.tb-poll[aria-busy="true"], .tb-git[aria-busy="true"] { cursor: progress; }
+.tb-git { flex: none; --btn-h: 30px; color: var(--muted); }
 .tb-poll-msg {
   flex: none;
   max-width: 220px;
@@ -293,6 +294,7 @@ button.tb-chip:hover { background: var(--tint-neutral-hover); }
     padding: 0;
     justify-content: center;
   }
+  .tb-git { --btn-h: 34px; width: 34px; }
   .tb-poll-text, .tb-poll-msg { display: none; }
 
   /* Live zone: only the state dots. */

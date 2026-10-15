@@ -38,12 +38,27 @@ export function connectWs(handlers) {
   };
 }
 
-async function send(url, body, method = 'POST') {
-  const res = await fetch(url, {
-    method,
-    headers: { ...authHeaders(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+/** Client-side ceilings, so a hung request can never keep a spinner on forever. */
+export const POLL_TIMEOUT_MS = 3 * 60 * 1000;
+export const GIT_TIMEOUT_MS = 2 * 60 * 1000;
+
+async function send(url, body, method = 'POST', timeoutMs = 0) {
+  const ctl = timeoutMs ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null;
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      signal: ctl?.signal,
+      headers: { ...authHeaders(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    if (e?.name === 'AbortError') { const te = new Error('timeout'); te.timeout = true; throw te; }
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     // The payload travels with the error: a refusal can carry what the caller
@@ -225,7 +240,8 @@ export const api = {
   setMachine: (project, issue, machine) => send(`${T(project, issue)}/machine`, { machine }),
   machines: () => fetch('/api/machines', { headers: authHeaders() }).then((r) => r.json()),
   models: () => fetch('/api/models', { headers: authHeaders() }).then((r) => r.json()),
-  pollNow: () => send('/api/poll'),
+  pollNow: () => send('/api/poll', undefined, 'POST', POLL_TIMEOUT_MS),
+  refreshGit: (project) => send('/api/git/refresh', project ? { project } : undefined, 'POST', GIT_TIMEOUT_MS),
   startCr: (project, issue) => send(`${T(project, issue)}/change-requests/start`),
   setActiveCr: (project, issue, reviewId, active) =>
     send(`${T(project, issue)}/change-requests/${reviewId}/active`, { active }),

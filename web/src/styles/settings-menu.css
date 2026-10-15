@@ -190,3 +190,14 @@
   .sm-hover { gap: 0; }
   .sm-hover .ui-seg-btn { min-width: 44px; min-height: 44px; padding: 0 6px; }
 }
+
+/* ---- Git refresh choice: six short buttons, same wrapping and 44px touch rules as the hover delay ---- */
+.sm-git .ui-seg-btn { padding: 0 6px; }
+.sm-root .ui-setting-inline:has(.sm-git) { flex-wrap: wrap; padding-bottom: 4px; }
+.sm-root .ui-setting-inline:has(.sm-git) .ui-setting-head { flex: 1 1 100%; }
+.sm-root .ui-setting-inline:has(.sm-git) .ui-setting-name { flex: 1 1 auto; }
+.sm-root .ui-setting-inline:has(.sm-git) .ui-setting-control { margin-left: auto; }
+@media (max-width: 780px), (pointer: coarse) {
+  .sm-git { gap: 0; }
+  .sm-git .ui-seg-btn { min-width: 44px; min-height: 44px; padding: 0 4px; }
+}

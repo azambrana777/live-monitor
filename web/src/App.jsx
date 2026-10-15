@@ -41,6 +41,26 @@ import { useStrings } from './i18n/useStrings.js';
 import { fill, locale, plural } from './i18n/index.js';
 
 // How far a job has got: a broadcast or an answer never takes a job back.
+/** A poll that «runs» for longer than this is a dead one, not a slow one. */
+const POLL_STALE_MS = 10 * 60 * 1000;
+
+/** Whether the server's `running` is a leftover: by `startedAt`, or by how long we have seen it true. */
+export function pollRunningStale(info, seenSince, now) {
+  if (!info?.running) return false;
+  const since = info.startedAt ?? seenSince;
+  return since != null && now - since > POLL_STALE_MS;
+}
+
+/** The current time, refreshed every 30 s so a staleness verdict is re-evaluated without any message. */
+function useStaleTick() {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(id);
+  }, []);
+  return now;
+}
+
 const JOB_RANK = { waiting: 0, running: 1, laptop: 2, done: 3, failed: 3 };
 
 /**
@@ -121,6 +141,9 @@ export default function App() {
   const [manageOpen, setManageOpen] = useState(false);
   const [crView, setCrView] = useState(null);   // { issue, reviewId }
   const [polling, setPolling] = useState(false);
+  const [refreshingGit, setRefreshingGit] = useState(false);
+  // When `pollInfo.running` was first seen true (for servers that send no startedAt).
+  const runningSince = useRef(null);
   const [fetchMsg, setFetchMsg] = useState(null);
   const [pollInfo, setPollInfo] = useState({ lastPollAt: null });
   const [clock, setClock] = useState(0);
@@ -794,6 +817,14 @@ export default function App() {
     }
   };
 
+  const runGitRefresh = () => {
+    if (refreshingGit) return;
+    setRefreshingGit(true);
+    api.refreshGit(activeProject)
+      .catch((e) => say(e.timeout ? t.topbar.bar.timeout : e))
+      .finally(() => setRefreshingGit(false));
+  };
+
   const runPoll = () => {
     setPolling(true);
     api.pollNow()
@@ -801,11 +832,16 @@ export default function App() {
         if (r.poll) setPollInfo(r.poll);
         setFetchMsg({ tasks: r.tasks || 0, changeRequests: r.changeRequests || 0 });
       })
-      .catch((e) => setFetchMsg({ error: e.message }))
+      .catch((e) => setFetchMsg({ error: e.timeout ? t.topbar.bar.timeout : e.message }))
       .finally(() => setPolling(false));
   };
 
-  const buscando = polling || pollInfo.running;
+  // A server that says «running» for ages is stale (its poll died): do not spin forever.
+  const nowTick = useStaleTick();
+  if (!pollInfo.running) runningSince.current = null;
+  else if (runningSince.current == null) runningSince.current = Date.now();
+  const serverRunning = pollInfo.running && !pollRunningStale(pollInfo, runningSince.current, nowTick);
+  const buscando = polling || serverRunning;
   // The result of the last manual search is kept as numbers and said here, so a
   // language chosen afterwards still reads it.
   const fetchText = !fetchMsg ? null : fetchMsg.error !== undefined ? fill(t.app.poll.error, { message: fetchMsg.error })
@@ -941,6 +977,7 @@ export default function App() {
           onCheckUpdates: checkForUpdates, onImported: projectImported,
         }}
         machines={machines} machineStatus={machineStatus} onOpenMetrics={() => setMetricsOpen(true)}
+        gitRefresh={{ busy: refreshingGit, run: runGitRefresh }}
         poll={{ busy: buscando, text: lastPollText, short: lastPollShort, msg: fetchText, run: runPoll }}
         query={query} setQuery={setQuery} searchRef={searchRef}
         upgradeChip={upgradeChipNow} onOpenUpgrade={() => setUpgradeDialog(true)} connected={connected}

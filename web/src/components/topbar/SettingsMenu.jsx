@@ -48,6 +48,10 @@ const Named = ({ name, sub }) => (
 /** «Off», «1 s», «2 s»…: how a hover delay is written, in the current language. */
 const hoverLabel = (t, ms) => (ms ? fill(t.topbar.settings.hoverSeconds, { n: ms / 1000 }) : t.topbar.settings.hoverOff);
 
+/** The git refresh choices, in seconds (0 = off). */
+const GIT_REFRESH_OPTIONS = [0, 30, 60, 120, 300, 600];
+const gitLabel = (t, s) => (!s ? t.topbar.settings.gitOff : s < 60 ? fill(t.topbar.settings.hoverSeconds, { n: s }) : `${s / 60} min`); // i18n-ok: the unit
+
 /** The hover delay of this browser, live: the cards and this row follow the same event. */
 function useHoverDelay() {
   const [ms, setMs] = useState(readHoverDelay);
@@ -108,6 +112,7 @@ export default function SettingsMenu({
   ) : null);
 
   const hoverMs = useHoverDelay();
+  const gitSecs = eff('gitRefreshSeconds') ?? 300;
   const plugins = pluginsSummary(t, state, chips);
   const maxTasks = settings.maxActiveTasks;
 
@@ -177,6 +182,17 @@ export default function SettingsMenu({
                     onClick={() => saveProjectSetting({ pollIntervalMinutes: Math.min(120, pollMins + 1) })}><Icon name="plus" /></button>
                 </span>
                 {resetBtn('pollIntervalMinutes')}
+              </span>
+            </SettingRow>
+
+            <SettingRow layout="inline" icon="branch"
+              name={<Named name={t.topbar.settings.gitName} sub={sourceOf('gitRefreshSeconds')} />}
+              title={fill(t.topbar.settings.gitTitle, { scope: scopeNote('gitRefreshSeconds') })}>
+              <span className="sm-inline">
+                <SegmentedControl context="menu" size="sm" label={t.topbar.settings.gitName} className="sm-git" value={gitSecs}
+                  options={GIT_REFRESH_OPTIONS.map((s) => ({ value: s, label: gitLabel(t, s) }))}
+                  onChange={(s) => saveProjectSetting({ gitRefreshSeconds: s })} />
+                {resetBtn('gitRefreshSeconds')}
               </span>
             </SettingRow>
           </div>

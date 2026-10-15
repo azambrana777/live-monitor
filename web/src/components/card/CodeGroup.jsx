@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import Icon from '../Icon.jsx';
 import ChangeRequestCard from '../ChangeRequestCard.jsx';
 import ChecksBar from '../charts/ChecksBar.jsx';
 import CardSection from './CardSection.jsx';
 import { useStrings } from '../../i18n/useStrings.js';
 import { fill, plural, strings } from '../../i18n/index.js';
+import { ago } from '../../time.js';
+import { dirtyNoteCount, gitUnknown, needsWorktree } from './gitNote.js';
 
 // The PR picker's labels live here, with the only component that reads them
 // (kept in TaskCard they would make an import cycle).
@@ -89,13 +91,18 @@ export function ReadyButton({ task, m, h }) {
 export default function CodeGroup({ task, m, h, compact = false, variant = 'expanded' }) {
   const t = useStrings();
   const { gitBusy, inFlight, prList, selectedPr, selectedPrNumber, setSelectedPrNumber, changeRequests, git, behind, unpushed, canPush, busy } = m;
-  const { onReviewer, onOpenCr, onToggleActiveCr, onDraftCr, onStartCr, onMergeMain, onPush, onMergeHelp } = h;
+  const { onReviewer, onOpenCr, onToggleActiveCr, onDraftCr, onStartCr, onMergeMain, onPush, onMergeHelp, onCreateWorktree } = h;
+  const [creating, setCreating] = useState(false);
   const showGit = Boolean(git) && !compact;
   const showReady = task.state === 'pr_draft' && Boolean(task.prNumber);
   const showReviewer = Boolean(task.prNumber && onReviewer);
   const showStack = !compact && changeRequests.length > 0;
   // Nothing here would exist for this task: no section, not an empty title.
-  if (!selectedPr && !showGit && !showReady && !showReviewer && !showStack) return null;
+  const unknown = gitUnknown(task, git, compact);
+  const noTree = needsWorktree(task, git, compact) && Boolean(onCreateWorktree);
+  const dirtyN = showGit ? dirtyNoteCount(git) : 0;
+  const checkedAt = showGit && git.at ? ago(git.at) : '';
+  if (!selectedPr && !showGit && !unknown && !noTree && !showReady && !showReviewer && !showStack) return null;
 
   // Pull/Push are disabled while the task or a chat turn is working (gitBusy);
   // the note says why once, instead of a dead pair of buttons saying nothing.
@@ -135,25 +142,46 @@ export default function CodeGroup({ task, m, h, compact = false, variant = 'expa
           )}
         </div>
       )}
-      {(showGit || showReady || showReviewer) && (
+      {(showGit || unknown || noTree || showReady || showReviewer) && (
         <div className="tcc-actions">
+          {unknown && <span className="tcc-git-unknown">{t.card.code.gitUnknown}</span>}
+          {noTree && (
+            <>
+              <button type="button" className="btn btn-sm btn-secondary" disabled title={t.card.code.noWorktreeNote}>
+                <Icon name="arrow-down" /> Pull{/* i18n-ok: git verb */}
+              </button>
+              <button type="button" className="btn btn-sm btn-secondary" disabled title={t.card.code.noWorktreeNote}>
+                <Icon name="arrow-up" /> Push{/* i18n-ok: git verb */}
+              </button>
+              <button type="button" className="btn btn-sm tcc-create-tree" disabled={creating || gitBusy}
+                title={t.card.code.createWorktreeTitle}
+                onClick={async () => {
+                  setCreating(true);
+                  try { await onCreateWorktree(task.issue); } finally { setCreating(false); }
+                }}>
+                <Icon name="tree" /> {t.card.code.createWorktree}
+              </button>
+              <span className="tcc-git-note tcc-no-tree">{t.card.code.noWorktreeNote}</span>
+            </>
+          )}
           {showGit && (
             <button type="button" className={`btn btn-sm ${behind > 0 ? 'btn-warn' : 'btn-secondary'}`} disabled={behind === 0 || gitBusy || inFlight('merge')}
               onClick={() => onMergeMain(task.issue)}
-              title={gitBusy ? fill(task.chatBusy ? t.card.code.pullWaitsChat : t.card.code.pullWaitsTask, { work: workTitle })
+              title={[gitBusy ? fill(task.chatBusy ? t.card.code.pullWaitsChat : t.card.code.pullWaitsTask, { work: workTitle })
                 : git.mergeStuck ? t.card.code.mergeStuck
                   : behind === 0 ? t.card.code.upToDate
                     : git.conflicts > 0
                       ? fill(plural(behind, t.card.code.pullConflict), { files: files(git.conflicts) })
-                      : plural(behind, t.card.code.pullBehind)}>
+                      : plural(behind, t.card.code.pullBehind), checkedAt && fill(t.card.code.gitChecked, { ago: checkedAt })].filter(Boolean).join(' · ')}>
               <Icon name="arrow-down" /> Pull{behind > 0 ? ` · ${behind}` : ''}{/* i18n-ok: git verb */}
             </button>
           )}
           {showGit && (
             <button type="button" className={`btn btn-sm ${canPush ? 'btn-warn' : 'btn-secondary'}`} disabled={!canPush || gitBusy || inFlight('push')}
               onClick={() => onPush(task.issue)}
-              title={gitBusy ? fill(task.chatBusy ? t.card.code.pushWaitsChat : t.card.code.pushWaitsTask, { work: workTitle })
-                : canPush ? t.card.code.pushTitle : t.card.code.nothingToPush}>
+              title={[gitBusy ? fill(task.chatBusy ? t.card.code.pushWaitsChat : t.card.code.pushWaitsTask, { work: workTitle })
+                : canPush ? t.card.code.pushTitle : dirtyN > 0 ? plural(dirtyN, t.card.code.commitFirst) : t.card.code.nothingToPush,
+                checkedAt && fill(t.card.code.gitChecked, { ago: checkedAt })].filter(Boolean).join(' · ')}>
               <Icon name="arrow-up" /> Push{unpushed > 0 ? ` · ${unpushed}` : ''}{/* i18n-ok: git verb */}
             </button>
           )}
@@ -164,6 +192,8 @@ export default function CodeGroup({ task, m, h, compact = false, variant = 'expa
             </button>
           )}
           <ReadyButton task={task} m={m} h={h} />
+          {dirtyN > 0 && <span className="tcc-git-note tcc-git-dirty">{plural(dirtyN, t.card.code.commitFirst)}</span>}
+          {checkedAt && <span className="tcc-git-note tcc-git-checked">{fill(t.card.code.gitChecked, { ago: checkedAt })}</span>}
           {showReviewer && (
             <button type="button" className="btn btn-secondary btn-sm tcc-reviewer" onClick={() => onReviewer(task.issue)}
               title={t.card.code.reviewerTitle}>

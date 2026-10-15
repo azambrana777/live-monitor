@@ -35,6 +35,7 @@ const shortPoll = (poll) => poll.short ?? poll.text.replace(/^[^:\d]*:\s*/, '');
  * @param {Record<string, object>} props.machineStatus reachability probed apart, by machine name
  * @param {() => void} props.onOpenMetrics
  * @param {{ busy: boolean, text: string, msg: string|null, run: () => void }} props.poll
+ * @param {{ busy: boolean, run: () => void }} [props.gitRefresh] refresh the git state of the active tasks
  * @param {string} props.query
  * @param {(q: string) => void} props.setQuery
  * @param {{ current: HTMLInputElement|null }} props.searchRef
@@ -44,7 +45,7 @@ const shortPoll = (poll) => poll.short ?? poll.text.replace(/^[^:\d]*:\s*/, '');
  */
 export default function Topbar({
   projects, activeProject, onSelectProject, onImported, onToggleRestricted, onRemoveProject, onManageProjects, fallbackRepo,
-  settingsMenu, moreMenu, machines, machineStatus, onOpenMetrics, poll,
+  settingsMenu, moreMenu, machines, machineStatus, onOpenMetrics, poll, gitRefresh,
   query, setQuery, searchRef, upgradeChip: upgradeChipNow, onOpenUpgrade, connected,
 }) {
   const t = useStrings();
@@ -116,6 +117,14 @@ export default function Topbar({
             {poll.busy ? <span className="tb-spin" aria-hidden="true"><Icon name="refresh"/></span> : <Icon name="refresh"/>}
             <span className="tb-poll-text">{poll.busy ? t.topbar.bar.polling : shortPoll(poll)}</span>
           </button>
+          {gitRefresh && (
+            <button type="button" className="btn btn-ghost btn-icon tb-git" onClick={gitRefresh.run} disabled={gitRefresh.busy}
+              aria-busy={gitRefresh.busy}
+              aria-label={gitRefresh.busy ? t.topbar.bar.gitBusy : t.topbar.bar.gitRefresh}
+              title={`${t.topbar.bar.gitTitle}\n${t.topbar.bar.gitTitleSub}`}>
+              {gitRefresh.busy ? <span className="tb-spin" aria-hidden="true"><Icon name="branch"/></span> : <Icon name="branch"/>}
+            </button>
+          )}
           <span className="tb-poll-msg" aria-live="polite">{poll.msg ?? ''}</span>
         </div>
 
