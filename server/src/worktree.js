@@ -1,4 +1,5 @@
 import { machineFor, requireProject } from './machine.js';
+import { shared } from './inflight.js';
 
 /**
  * Git on a task's worktree. Every function takes the `Machine` the worktree
@@ -71,12 +72,30 @@ export async function listAllBranches({ force = false, project } = {}) {
   requireProject(project, 'listAllBranches');
   const cached = branchCaches.get(project) ?? EMPTY;
   if (!force && Date.now() - cached.at < BRANCH_TTL_MS) return cached.list;
+  if (!force) {
+    // A forced fetch under way is at least as fresh as what this call wants.
+    return branchInflight.get(`${project}:force`)
+      ?? shared(branchInflight, project, () => fetchBranches(project));
+  }
+  // Forced: wait for an unforced one under way (its fetch may predate the
+  // caller's wish), then fetch; identical forced calls share one promise.
+  return shared(branchInflight, `${project}:force`, async () => {
+    const plain = branchInflight.get(project);
+    if (plain) await plain.catch(() => {});
+    return fetchBranches(project);
+  });
+}
+
+const branchInflight = new Map();   // project | project:force -> in-flight fetch
+
+async function fetchBranches(project) {
+  const cached = branchCaches.get(project) ?? EMPTY;
   const m = machineFor('local', project);
   const repo = m.repoPath;
   await m.exec('git', ['fetch', 'origin', '--prune'], { cwd: repo, timeoutMs: 3 * 60 * 1000 });
   const r = await m.exec('git', [
     'for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes/origin',
-  ], { cwd: repo });
+  ], { cwd: repo, timeoutMs: 60_000 });
   if (!r.ok) return cached.list;
   const fresh = {
     at: Date.now(),
@@ -466,7 +485,7 @@ export async function mergeBlockers(machine, wtPath, mainSha) {
     machine.exec('git', ['diff', '--name-only', `HEAD...${mainSha}`], { cwd: wtPath }),
     machine.exec('git', ['-c', 'core.quotePath=false', 'diff', '--name-only'], { cwd: wtPath }),
     machine.exec('git', ['-c', 'core.quotePath=false', 'diff', '--name-only', '--cached'], { cwd: wtPath }),
-    machine.exec('git', ['-c', 'core.quotePath=false', 'status', '--porcelain'], { cwd: wtPath }),
+    machine.exec('git', ['-c', 'core.quotePath=false', 'status', '--porcelain'], { cwd: wtPath, timeoutMs: 60_000 }),
   ]);
 
   const incoming = new Set(lines(incomingR.stdout));
@@ -564,9 +583,9 @@ export async function pendingWork(machine, wtPath, branch, { base = DEFAULT_BASE
     machine.exec('git', ['-c', 'core.quotePath=false', 'status', '--porcelain'], { cwd: wtPath }),
     // `--not origin/<base>` so the count keeps meaning "your work": after bringing
     // main in, the plain count would include every commit main contributed.
-    machine.exec('git', ['rev-list', '--count', `origin/${branch}..HEAD`, '--not', `origin/${base}`], { cwd: wtPath }),
-    machine.exec('git', ['-c', 'core.quotePath=false', 'diff', '--name-only', `origin/${base}...HEAD`], { cwd: wtPath }),
-    machine.exec('git', ['rev-list', '--count', `HEAD..origin/${base}`], { cwd: wtPath }),
+    machine.exec('git', ['rev-list', '--count', `origin/${branch}..HEAD`, '--not', `origin/${base}`], { cwd: wtPath, timeoutMs: 60_000 }),
+    machine.exec('git', ['-c', 'core.quotePath=false', 'diff', '--name-only', `origin/${base}...HEAD`], { cwd: wtPath, timeoutMs: 60_000 }),
+    machine.exec('git', ['rev-list', '--count', `HEAD..origin/${base}`], { cwd: wtPath, timeoutMs: 60_000 }),
   ]);
 
   const lines = status.ok ? status.stdout.split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean) : [];

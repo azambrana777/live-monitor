@@ -3,6 +3,30 @@
 // import-project dialog. Spanish is the source; en, fr and de keep exactly these
 // keys and `{holes}`.
 export default {
+  poll: {
+    steps: {
+      listing: 'Listando issues',
+      sweep: 'Revisando cerrados',
+      fetch: 'Actualizando ramas',
+      classify: 'Clasificando tareas',
+      branches: 'Estado de git',
+      checks: 'Revisando checks',
+      crs: 'Revisando revisiones',
+    },
+    progress: 'Buscando {done}/{total}',
+    tooltip: 'Buscando: {step} {done}/{total}',
+    title: 'Búsqueda en curso',
+    stepOf: 'Paso {n} de {count}',
+    elapsed: '{time} transcurridos',
+    project: 'Proyecto: {project}',
+    cancel: 'Cancelar búsqueda',
+    cancelling: 'Cancelando…',
+    cancelled: 'Búsqueda cancelada',
+    current: 'paso actual',
+    done: 'hecho',
+    pending: 'pendiente',
+    panel: 'Buscando issues y change requests',
+  },
   bar: {
     openSearch: 'Abrir la búsqueda de tareas',
     searchByNumberOrTitle: 'Buscar por número o título',

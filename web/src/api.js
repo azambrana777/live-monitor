@@ -39,7 +39,7 @@ export function connectWs(handlers) {
 }
 
 /** Client-side ceilings, so a hung request can never keep a spinner on forever. */
-export const POLL_TIMEOUT_MS = 3 * 60 * 1000;
+export const POLL_TIMEOUT_MS = 15 * 1000; // the server answers 202 at once; the cycle runs on in the background
 export const GIT_TIMEOUT_MS = 2 * 60 * 1000;
 
 async function send(url, body, method = 'POST', timeoutMs = 0) {
@@ -241,6 +241,7 @@ export const api = {
   machines: () => fetch('/api/machines', { headers: authHeaders() }).then((r) => r.json()),
   models: () => fetch('/api/models', { headers: authHeaders() }).then((r) => r.json()),
   pollNow: () => send('/api/poll', undefined, 'POST', POLL_TIMEOUT_MS),
+  cancelPoll: () => send('/api/poll/cancel', undefined, 'POST', POLL_TIMEOUT_MS),
   refreshGit: (project) => send('/api/git/refresh', project ? { project } : undefined, 'POST', GIT_TIMEOUT_MS),
   startCr: (project, issue) => send(`${T(project, issue)}/change-requests/start`),
   setActiveCr: (project, issue, reviewId, active) =>

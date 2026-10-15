@@ -16,15 +16,16 @@ const menu = read('web/src/components/topbar/SettingsMenu.jsx');
 test('api: refreshGit posts to /api/git/refresh and both calls have a client timeout', () => {
   assert.match(api, /refreshGit: \(project\) => send\('\/api\/git\/refresh'/);
   assert.match(api, /pollNow: \(\) => send\('\/api\/poll', undefined, 'POST', POLL_TIMEOUT_MS\)/);
+  assert.match(api, /cancelPoll: \(\) => send\('\/api\/poll\/cancel'/);
   assert.match(api, /AbortController/);
-  assert.match(api, /POLL_TIMEOUT_MS = 3 \* 60 \* 1000/);
+  assert.match(api, /POLL_TIMEOUT_MS = 15 \* 1000/);
   assert.match(api, /GIT_TIMEOUT_MS = 2 \* 60 \* 1000/);
 });
 
 test('App: stale `running` is ignored after 10 min and re-evaluated every 30 s', () => {
   assert.match(app, /POLL_STALE_MS = 10 \* 60 \* 1000/);
   assert.match(app, /setInterval\(\(\) => setNow\(Date\.now\(\)\), 30000\)/);
-  assert.match(app, /const buscando = polling \|\| serverRunning/);
+  assert.match(app, /const buscando = pollStarting \|\| serverRunning/);
   assert.match(app, /gitRefresh=\{\{ busy: refreshingGit, run: runGitRefresh \}\}/);
   assert.match(app, /api\.refreshGit\(activeProject\)/);
 });

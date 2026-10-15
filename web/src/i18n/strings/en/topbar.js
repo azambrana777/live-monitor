@@ -1,5 +1,29 @@
 // The 'topbar' area, in English. Same keys and `{holes}` as es.
 export default {
+  poll: {
+    steps: {
+      listing: 'Listing issues',
+      sweep: 'Checking closed',
+      fetch: 'Updating branches',
+      classify: 'Classifying tasks',
+      branches: 'Git state',
+      checks: 'Checking checks',
+      crs: 'Checking reviews',
+    },
+    progress: 'Searching {done}/{total}',
+    tooltip: 'Searching: {step} {done}/{total}',
+    title: 'Search in progress',
+    stepOf: 'Step {n} of {count}',
+    elapsed: '{time} elapsed',
+    project: 'Project: {project}',
+    cancel: 'Cancel search',
+    cancelling: 'Cancelling…',
+    cancelled: 'Search cancelled',
+    current: 'current step',
+    done: 'done',
+    pending: 'pending',
+    panel: 'Searching issues and change requests',
+  },
   bar: {
     openSearch: 'Open task search',
     searchByNumberOrTitle: 'Search by number or title',

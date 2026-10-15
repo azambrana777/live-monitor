@@ -1,5 +1,29 @@
 // The 'topbar' area, in German (informal «du»). Same keys and `{holes}` as es.
 export default {
+  poll: {
+    steps: {
+      listing: 'Issues auflisten',
+      sweep: 'Geschlossene prüfen',
+      fetch: 'Branches aktualisieren',
+      classify: 'Aufgaben einordnen',
+      branches: 'Git-Status',
+      checks: 'Checks prüfen',
+      crs: 'Reviews prüfen',
+    },
+    progress: 'Suche {done}/{total}',
+    tooltip: 'Suche: {step} {done}/{total}',
+    title: 'Suche läuft',
+    stepOf: 'Schritt {n} von {count}',
+    elapsed: '{time} vergangen',
+    project: 'Projekt: {project}',
+    cancel: 'Suche abbrechen',
+    cancelling: 'Wird abgebrochen…',
+    cancelled: 'Suche abgebrochen',
+    current: 'aktueller Schritt',
+    done: 'erledigt',
+    pending: 'ausstehend',
+    panel: 'Suche nach Issues und Change Requests',
+  },
   bar: {
     openSearch: 'Aufgabensuche öffnen',
     searchByNumberOrTitle: 'Nach Nummer oder Titel suchen',

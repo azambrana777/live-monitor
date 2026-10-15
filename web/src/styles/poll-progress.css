@@ -1,0 +1,38 @@
+/* Poll progress popover of the top bar (prefix pp-). Tokens only. */
+.pp-count { font-variant-numeric: tabular-nums; }
+.pp-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.pp-panel { min-width: 260px; max-width: 320px; padding: 10px 12px; }
+.pp-title { margin: 0 0 8px; font-size: var(--fs-ui); font-weight: 600; color: var(--text); }
+.pp-steps { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.pp-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.pp-mark { display: inline-flex; flex: none; width: 16px; justify-content: center; }
+.pp-name { flex: 1; min-width: 0; }
+.pp-num { flex: none; font-variant-numeric: tabular-nums; }
+.pp-done { color: var(--text-2); }
+.pp-current { color: var(--text); font-weight: 600; }
+.pp-meta { margin: 0 0 4px; font-size: var(--fs-sm); color: var(--text-2); overflow-wrap: anywhere; }
+.pp-cancel { margin-top: 6px; width: 100%; min-height: 32px; }
+.pp-cancel:disabled { cursor: progress; }
+
+@media (max-width: 780px) {
+  .pp-step { min-height: 44px; }
+  .pp-cancel { min-height: 44px; }
+}

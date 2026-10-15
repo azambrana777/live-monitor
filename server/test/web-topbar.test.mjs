@@ -39,15 +39,18 @@ test('search keeps its ref, its label and its Esc handling', () => {
 });
 
 test('one poll button, busy-aware, with a polite live region', () => {
-  assert.match(topbar, /onClick=\{poll\.run\}/);
-  assert.match(topbar, /disabled=\{poll\.busy\}/);
+  const pp = readFileSync(path.join(root, 'web/src/components/topbar/PollProgress.jsx'), 'utf8');
+  assert.match(topbar, /<PollProgress running=\{poll\.busy\}/);
+  assert.match(topbar, /onStart=\{poll\.run\}/);
+  assert.doesNotMatch(topbar, /disabled=\{poll\.busy\}/, 'the poll button is never disabled while a cycle runs');
+  assert.doesNotMatch(pp, /disabled=\{running\}/);
   assert.match(topbar, /aria-live="polite"/);
   assert.doesNotMatch(topbar, /Buscar ahora<\/|> Buscar ahora/);
   assert.doesNotMatch(topbar, /Buscar ahora/, 'the poll label lives in the catalog');
   assert.match(E('topbar.bar.pollNow'), /^Buscar ahora/);
-  assert.match(topbar, /t\.topbar\.bar\.pollNow/);
+  assert.match(pp, /t\.topbar\.bar\.pollNow/);
   assert.equal(E('topbar.bar.polling'), 'buscando…');
-  assert.match(topbar, /t\.topbar\.bar\.polling/);
+  assert.match(pp, /t\.topbar\.bar\.polling/);
   // The short text no longer depends on a Spanish label: poll.short, else whatever follows the first colon.
   assert.ok(topbar.includes(String.raw`const shortPoll = (poll) => poll.short ?? poll.text.replace(/^[^:\d]*:\s*/, '');`), 'shortPoll is language-independent');
   assert.doesNotMatch(topbar, /Buscar cada|Próxima|próxima|Sondeo|sondeo/, 'no Spanish prefix regex in shortPoll');

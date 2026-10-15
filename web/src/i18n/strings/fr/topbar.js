@@ -1,5 +1,29 @@
 // The 'topbar' area, in French (informal «tu»). Same keys and `{holes}` as es.
 export default {
+  poll: {
+    steps: {
+      listing: 'Liste des issues',
+      sweep: 'Vérification des clôturées',
+      fetch: 'Mise à jour des branches',
+      classify: 'Classement des tâches',
+      branches: 'État de git',
+      checks: 'Vérification des checks',
+      crs: 'Vérification des revues',
+    },
+    progress: 'Recherche {done}/{total}',
+    tooltip: 'Recherche : {step} {done}/{total}',
+    title: 'Recherche en cours',
+    stepOf: 'Étape {n} sur {count}',
+    elapsed: '{time} écoulées',
+    project: 'Projet : {project}',
+    cancel: 'Annuler la recherche',
+    cancelling: 'Annulation…',
+    cancelled: 'Recherche annulée',
+    current: 'étape en cours',
+    done: 'fait',
+    pending: 'en attente',
+    panel: 'Recherche des issues et des change requests',
+  },
   bar: {
     openSearch: 'Ouvrir la recherche de tâches',
     searchByNumberOrTitle: 'Rechercher par numéro ou titre',

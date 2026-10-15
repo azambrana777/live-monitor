@@ -6,7 +6,7 @@ import path from 'node:path';
 import { config, configEvents, ROOT } from './config.js';
 import { store } from './store.js';
 import { settings } from './settings.js';
-import { startPolling, pollNow, pollStatus, pollEvents } from './poller.js';
+import { startPolling, startPoll, cancelPoll, pollStatus, pollEvents } from './poller.js';
 import {
   tick, retry, markReady, sendChat, deleteWorktree, activeCount, generateDemoSteps,
   forceStart, detectExistingWork, ensureWorktree, interruptChat, setChatModel, chatEffectiveEffort, setMode,
@@ -1060,13 +1060,25 @@ app.post('/api/projects/:project/tasks/:issue/mode', withTask((task, req, res) =
   }
 }));
 
-/** The Fetch button: runs a full cycle now and reports what it found. */
-app.post('/api/poll', async (_req, res) => {
+/**
+ * The Fetch button: starts a cycle if none is running and answers at once —
+ * a cold cycle takes minutes, so the request must not hold. Progress and the
+ * result travel through the 'poll' event and `poll.last`.
+ */
+app.post('/api/poll', (_req, res) => {
   try {
-    res.json({ ...(await pollNow()), poll: pollStatus() });
+    const { started, promise } = startPoll();
+    // Nobody awaits the cycle here; its failure is already in `poll.last`.
+    promise.catch(() => {});
+    res.status(202).json({ ok: true, started, poll: pollStatus() });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+/** Asks the running cycle to stop starting new work; the status shows `cancelling` until it ends. */
+app.post('/api/poll/cancel', (_req, res) => {
+  res.json({ ok: true, poll: cancelPoll() });
 });
 
 /** Re-reads git state (fetch + branch status) now; body `{project}` limits it to one project. */
