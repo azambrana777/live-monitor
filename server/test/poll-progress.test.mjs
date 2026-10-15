@@ -21,6 +21,8 @@ function steps(taskList, over = {}) {
     refreshBranchStatus: noop,
     refreshStackHealth: noop,
     refreshChecks: noop,
+    prefetchChecks: async () => new Map(),
+    applyChecksForTask: noop,
     checkChangeRequests: async () => 0,
     tick: () => {},
     evaluateQuota: () => {},
@@ -39,26 +41,40 @@ function startCycle(due, stepSet, hooks = {}) {
   return poller.startPoll();
 }
 
-test('phases are reported in order with done/total, and the status is idle afterwards', async () => {
+test('phases overlap; counters per phase, sums, step = lowest started unfinished; idle afterwards', async () => {
   const seen = [];
-  const on = (s) => seen.push({ ...s });
+  const on = (s) => seen.push(JSON.parse(JSON.stringify(s)));
   poller.pollEvents.on('poll', on);
-  const { started, promise } = startCycle(projects(2), steps(tasks(3)), { throttleMs: 0 });
+  const { started, promise } = startCycle(projects(2), steps(tasks(3), {
+    pollProject: () => sleep(5),
+    refreshClassification: () => sleep(3),
+  }), { throttleMs: 0 });
   assert.equal(started, true);
   await promise;
   poller.pollEvents.off('poll', on);
 
-  const order = [];
-  for (const s of seen) if (s.step && order.at(-1) !== s.step) order.push(s.step);
-  assert.deepEqual(order, ['listing', 'sweep', 'fetch', 'classify', 'branches', 'checks', 'crs']);
-  for (const s of seen.filter((x) => x.step)) {
+  const running = seen.filter((s) => s.running && s.step);
+  assert.ok(running.length > 0);
+  let prevTotal = 0;
+  for (const s of running) {
     assert.equal(s.stepCount, 7);
-    assert.equal(s.stepIndex, order.indexOf(s.step) + 1);
+    assert.equal(s.stepIndex, ['listing', 'sweep', 'fetch', 'classify', 'branches', 'checks', 'crs'].indexOf(s.step) + 1);
+    const sumDone = Object.values(s.phases).reduce((a, p) => a + p.done, 0);
+    const sumTotal = Object.values(s.phases).reduce((a, p) => a + p.total, 0);
+    assert.equal(s.done, sumDone);
+    assert.equal(s.total, sumTotal);
+    assert.ok(s.total >= prevTotal, 'total never decreases');
+    prevTotal = s.total;
+    for (const p of Object.values(s.phases)) assert.ok(p.done <= p.total);
   }
-  const lastOf = (step) => seen.filter((s) => s.step === step).at(-1);
-  assert.deepEqual([lastOf('listing').done, lastOf('listing').total], [2, 2]);
-  assert.deepEqual([lastOf('classify').done, lastOf('classify').total], [3, 3]);
-  assert.deepEqual([lastOf('crs').done, lastOf('crs').total], [3, 3]);
+  const final = running.at(-1);
+  assert.deepEqual(final.phases.listing, { done: 2, total: 2 });
+  assert.deepEqual(final.phases.fetch, { done: 2, total: 2 });
+  assert.deepEqual(final.phases.checks, { done: 2, total: 2 });
+  // listTasks hands the same 3 tasks (project p0) to each project chain but p1 filters them out.
+  assert.deepEqual(final.phases.classify, { done: 3, total: 3 });
+  assert.deepEqual(final.phases.branches, { done: 3, total: 3 });
+  assert.deepEqual(final.phases.crs, { done: 3, total: 3 });
 
   const st = poller.pollStatus();
   assert.equal(st.running, false);
@@ -66,6 +82,7 @@ test('phases are reported in order with done/total, and the status is idle after
   assert.equal(st.step, null);
   assert.equal(st.done, 0);
   assert.equal(st.total, 0);
+  assert.deepEqual(st.phases.listing, { done: 0, total: 0 });
   assert.equal(seen.at(-1).running, false);
   assert.equal(st.last.error, null);
   assert.equal(typeof st.last.finishedAt, 'string');
@@ -74,7 +91,8 @@ test('phases are reported in order with done/total, and the status is idle after
 
 test('inside a loop the event is throttled and the final count is not lost', async () => {
   const seen = [];
-  const on = (s) => { if (s.step === 'classify') seen.push(s.done); };
+  let last = -1;
+  const on = (s) => { if (s.running && s.phases.classify.done !== last) { last = s.phases.classify.done; seen.push(last); } };
   poller.pollEvents.on('poll', on);
   const { promise } = startCycle(projects(1), steps(tasks(40), {
     refreshClassification: () => sleep(2),
@@ -82,11 +100,11 @@ test('inside a loop the event is throttled and the final count is not lost', asy
   await promise;
   poller.pollEvents.off('poll', on);
   // 40 tasks, 4 at a time, ~2 ms each: a short loop, far fewer emits than tasks.
-  assert.ok(seen.length <= 6, `too many emits: ${seen.length}`);
+  assert.ok(seen.length <= 12,`too many emits: ${seen.length}`);
   assert.equal(seen.at(-1), 40);
 });
 
-test('concurrency of the per-task phases never exceeds 4, and per-project fetches 3', async () => {
+test('concurrency: at most 6 task steps overall, per-project fetches 3', async () => {
   let active = 0;
   let max = 0;
   let fActive = 0;
@@ -105,7 +123,7 @@ test('concurrency of the per-task phases never exceeds 4, and per-project fetche
     listAllBranches: async () => { fActive++; fMax = Math.max(fMax, fActive); await sleep(5); fActive--; },
   }));
   await promise;
-  assert.equal(max, 4);
+  assert.equal(max, 6);
   assert.equal(fMax, 3);
 });
 
@@ -119,11 +137,14 @@ test('an error in one task is isolated: the rest still run', async () => {
   assert.equal(res.error, undefined);
 });
 
-test('refreshChecks is called with the due project ids', async () => {
-  let arg;
-  const { promise } = startCycle(projects(3), steps([], { refreshChecks: async (a) => { arg = a; } }));
+test('without the split checks exports, refreshChecks is called once per due project', async () => {
+  const args = [];
+  const { promise } = startCycle(projects(3), steps([], {
+    prefetchChecks: undefined, applyChecksForTask: undefined,
+    refreshChecks: async (a) => { args.push(a); },
+  }));
   await promise;
-  assert.deepEqual(arg, { projects: ['p0', 'p1', 'p2'] });
+  assert.deepEqual(args.map((a) => a.projects).sort(), [['p0'], ['p1'], ['p2']]);
 });
 
 test('cancel: no new work starts, in-flight finishes, status ends running:false cancelling:false', async () => {

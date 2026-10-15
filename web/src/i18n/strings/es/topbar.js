@@ -14,7 +14,7 @@ export default {
       crs: 'Revisando revisiones',
     },
     progress: 'Buscando {done}/{total}',
-    tooltip: 'Buscando: {step} {done}/{total}',
+    tooltip: 'Buscando: {step} · {done}/{total}',
     title: 'Búsqueda en curso',
     stepOf: 'Paso {n} de {count}',
     elapsed: '{time} transcurridos',
@@ -25,6 +25,8 @@ export default {
     current: 'paso actual',
     done: 'hecho',
     pending: 'pendiente',
+    overall: 'Progreso total {percent}%',
+    active: 'en curso',
     panel: 'Buscando issues y change requests',
   },
   bar: {

@@ -11,7 +11,7 @@ export default {
       crs: 'Vérification des revues',
     },
     progress: 'Recherche {done}/{total}',
-    tooltip: 'Recherche : {step} {done}/{total}',
+    tooltip: 'Recherche : {step} · {done}/{total}',
     title: 'Recherche en cours',
     stepOf: 'Étape {n} sur {count}',
     elapsed: '{time} écoulées',
@@ -22,6 +22,8 @@ export default {
     current: 'étape en cours',
     done: 'fait',
     pending: 'en attente',
+    overall: 'Progression totale {percent} %',
+    active: 'en cours',
     panel: 'Recherche des issues et des change requests',
   },
   bar: {

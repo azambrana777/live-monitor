@@ -11,7 +11,7 @@ export default {
       crs: 'Checking reviews',
     },
     progress: 'Searching {done}/{total}',
-    tooltip: 'Searching: {step} {done}/{total}',
+    tooltip: 'Searching: {step} · {done}/{total}',
     title: 'Search in progress',
     stepOf: 'Step {n} of {count}',
     elapsed: '{time} elapsed',
@@ -22,6 +22,8 @@ export default {
     current: 'current step',
     done: 'done',
     pending: 'pending',
+    overall: 'Overall progress {percent}%',
+    active: 'in progress',
     panel: 'Searching issues and change requests',
   },
   bar: {

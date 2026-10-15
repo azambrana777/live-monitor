@@ -395,25 +395,40 @@ export async function issueStates(numbers, projectId) {
   return merged;
 }
 
-/** PRs GitHub has linked to the issue (the "Development" / closing-reference field). */
+/**
+ * `gh` could not answer (network, 429, secondary rate limit, unreadable
+ * output). Distinct from an empty answer: an empty list means "nothing
+ * there", this means "unknown", and a consumer must keep what it had.
+ */
+export class GhUnavailableError extends Error {
+  constructor(message) { super(message); this.name = 'GhUnavailableError'; }
+}
+
+/**
+ * PRs GitHub has linked to the issue (the "Development" / closing-reference
+ * field). Throws {@link GhUnavailableError} when `gh` fails: an empty list is
+ * a real answer ("no linked PR") and a failure must not pass for it.
+ */
 export async function linkedPullRequests(number, projectId) {
   requireProject(projectId, 'linkedPullRequests');
   const r = await run('gh', [
     'issue', 'view', String(number), '-R', repo(projectId),
     '--json', 'closedByPullRequestsReferences',
   ], { timeoutMs: GH_TIMEOUT_MS });
-  if (!r.ok) return [];
+  if (!r.ok) throw new GhUnavailableError(`gh issue view #${number} failed: ${r.stderr}`);
   let refs;
   try {
     refs = JSON.parse(r.stdout).closedByPullRequestsReferences ?? [];
   } catch {
-    return [];
+    throw new GhUnavailableError(`could not read the linked PRs of #${number}`);
   }
   // The reference carries only number/url/repository, so ask for title+state
   // separately — knowing whether it is merged or still open changes what the
   // user does about it. Cross-repo references are dropped.
   const own = refs.filter((p) => !p.repository || `${p.repository.owner.login}/${p.repository.name}` === repo(projectId));
-  const known = await allPullRequests(projectId);
+  // The backlog list is only a shortcut: without it each PR is asked about
+  // one by one below.
+  const known = own.length ? await allPullRequests(projectId).catch(() => []) : [];
   return Promise.all(own.map(async (p) => {
     let extra = known.find((pr) => pr.number === p.number);
     if (!extra) {
@@ -421,7 +436,8 @@ export async function linkedPullRequests(number, projectId) {
         'pr', 'view', String(p.number), '-R', repo(projectId),
         '--json', 'title,state,isDraft,url,createdAt,mergedAt,closedAt',
       ]);
-      try { extra = detail.ok ? JSON.parse(detail.stdout) : {}; } catch { extra = {}; }
+      if (!detail.ok) throw new GhUnavailableError(`gh pr view #${p.number} failed: ${detail.stderr}`);
+      try { extra = JSON.parse(detail.stdout); } catch { throw new GhUnavailableError(`could not read PR #${p.number}`); }
     }
     return {
       number: p.number,
@@ -461,13 +477,18 @@ async function fetchAllPullRequests(r) {
     'pr', 'list', '-R', r, '--state', 'all', '--limit', '200',
     '--json', 'number,title,headRefName,url,state,isDraft,createdAt,mergedAt,closedAt',
   ], { timeoutMs: 2 * 60 * 1000 });
-  if (!result.ok) return cached?.list ?? [];
+  // No cache and no answer is "unknown", never an empty backlog.
+  if (!result.ok) {
+    if (cached) return cached.list;
+    throw new GhUnavailableError(`gh pr list failed: ${result.stderr}`);
+  }
   try {
     const list = JSON.parse(result.stdout);
     prCache.set(r, { at: Date.now(), list });
     return list;
   } catch {
-    return cached?.list ?? []; // keep the previous list
+    if (cached) return cached.list; // keep the previous list
+    throw new GhUnavailableError('could not read the PR list');
   }
 }
 
@@ -544,7 +565,7 @@ export async function prsForBranch(branch, { cache = false, project } = {}) {
   if (!r.ok) {
     const stale = cache && prBranchCache.get(key);
     if (stale) return stale.list.map((p) => ({ ...p }));
-    throw new Error(`gh pr list --head ${bare} failed: ${r.stderr}`);
+    throw new GhUnavailableError(`gh pr list --head ${bare} failed: ${r.stderr}`);
   }
   let list;
   try {
@@ -877,7 +898,9 @@ export async function checksForOpenPrs({ force = false, project } = {}) {
     'pr', 'list', '-R', r, '--state', 'open', '--limit', '100',
     '--json', 'number,headRefOid,isDraft,statusCheckRollup',
   ], { timeoutMs: 2 * 60 * 1000 });
-  if (!result.ok) return cached?.byNumber ?? new Map();
+  // null = unknown (no answer and nothing cached); an empty Map is a real
+  // "no open PRs". Callers keep the previous lights on null.
+  if (!result.ok) return cached?.byNumber ?? null;
 
   try {
     const byNumber = new Map();
@@ -892,7 +915,7 @@ export async function checksForOpenPrs({ force = false, project } = {}) {
     checksCache.set(r, { at: Date.now(), byNumber });
     return byNumber;
   } catch {
-    return cached?.byNumber ?? new Map(); // keep the previous answer rather than inventing one
+    return cached?.byNumber ?? null; // keep the previous answer rather than inventing one
   }
 }
 

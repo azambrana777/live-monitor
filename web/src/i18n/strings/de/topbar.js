@@ -11,7 +11,7 @@ export default {
       crs: 'Reviews prüfen',
     },
     progress: 'Suche {done}/{total}',
-    tooltip: 'Suche: {step} {done}/{total}',
+    tooltip: 'Suche: {step} · {done}/{total}',
     title: 'Suche läuft',
     stepOf: 'Schritt {n} von {count}',
     elapsed: '{time} vergangen',
@@ -22,6 +22,8 @@ export default {
     current: 'aktueller Schritt',
     done: 'erledigt',
     pending: 'ausstehend',
+    overall: 'Gesamtfortschritt {percent} %',
+    active: 'läuft',
     panel: 'Suche nach Issues und Change Requests',
   },
   bar: {

@@ -27,7 +27,11 @@
 .pp-name { flex: 1; min-width: 0; }
 .pp-num { flex: none; font-variant-numeric: tabular-nums; }
 .pp-done { color: var(--text-2); }
-.pp-current { color: var(--text); font-weight: 600; }
+.pp-active { color: var(--text); font-weight: 600; }
+.pp-overall { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+.pp-bar { flex: 1; height: 6px; border-radius: var(--r-pill); background: var(--line); overflow: hidden; }
+.pp-bar-fill { display: block; height: 100%; background: var(--accent); transition: width 0.3s ease; }
+.pp-pct { flex: none; min-width: 3ch; text-align: right; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; color: var(--text-2); }
 .pp-meta { margin: 0 0 4px; font-size: var(--fs-sm); color: var(--text-2); overflow-wrap: anywhere; }
 .pp-cancel { margin-top: 6px; width: 100%; min-height: 32px; }
 .pp-cancel:disabled { cursor: progress; }

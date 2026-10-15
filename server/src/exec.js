@@ -13,7 +13,72 @@ import path from 'node:path';
  * board disconnected from the runner).
  */
 export function run(file, args, { cwd, onLine, timeoutMs = 10 * 60 * 1000, env, signal } = {}) {
-  return execute(file, args, false, { cwd, onLine, timeoutMs, env, signal });
+  return throttled(file, args, cwd, () => execute(file, args, false, { cwd, onLine, timeoutMs, env, signal }));
+}
+
+/**
+ * Global process budget. Task-level limits count tasks, not processes (one
+ * task runs four git calls at once, a classification two to four gh calls), so
+ * the cap lives here, at the spawn, keyed on the command name. Only the real
+ * spawn holds a slot: a caller waiting for gitMutex or anything else holds
+ * nothing, so a writer queue cannot starve the readers it waits behind.
+ * Remote runner machines have their own path and are not counted here.
+ */
+const caps = { gh: 8, ghPerRepo: 4, git: 8 };
+let globalSemsCache = null;
+const globalSems = () => (globalSemsCache ??= {
+  gh: new Semaphore(() => caps.gh),
+  git: new Semaphore(() => caps.git),
+});
+const ghRepoSems = new Map();
+
+/** Overrides the caps (tests, tuning). Returns the previous values. */
+export function setProcessCaps(next = {}) {
+  const prev = { ...caps };
+  for (const k of ['gh', 'ghPerRepo', 'git']) {
+    if (next[k] != null) caps[k] = Math.max(1, Math.floor(Number(next[k])) || 1);
+  }
+  globalSems().gh.refresh(); globalSems().git.refresh();
+  for (const sem of ghRepoSems.values()) sem.refresh();
+  return prev;
+}
+
+export function getProcessCaps() { return { ...caps }; }
+
+/** Tests only: live counters of the global semaphores. */
+export function _processSlots() {
+  return { gh: globalSems().gh.active, git: globalSems().git.active };
+}
+
+function commandName(file) {
+  return String(file).replace(/^.*[\\/]/, '').replace(/\.exe$/i, '').toLowerCase();
+}
+
+/** `-R owner/name` / `--repo` in a gh argv, else the cwd, else null. */
+function ghRepoKey(args, cwd) {
+  const i = args.findIndex((a) => a === '-R' || a === '--repo');
+  if (i >= 0 && args[i + 1]) return String(args[i + 1]).toLowerCase();
+  const eq = args.find((a) => typeof a === 'string' && a.startsWith('--repo='));
+  if (eq) return eq.slice(7).toLowerCase();
+  const api = args.find((a) => typeof a === 'string' && /^repos\/[^/]+\/[^/?]+/.test(a));
+  if (api) return api.split('/').slice(1, 3).join('/').toLowerCase();
+  return cwd ? `cwd:${String(cwd).toLowerCase()}` : null;
+}
+
+/** Tests only: the budget layer around any async `spawnIt`. */
+export const _throttled = (file, args, cwd, spawnIt) => throttled(file, args, cwd, spawnIt);
+
+function throttled(file, args, cwd, spawnIt) {
+  const name = commandName(file);
+  const global = globalSems()[name];
+  if (!global) return spawnIt();
+  if (name !== 'gh') return global.run(spawnIt);
+  const key = ghRepoKey(args, cwd);
+  if (!key) return global.run(spawnIt);
+  let per = ghRepoSems.get(key);
+  if (!per) { per = new Semaphore(() => caps.ghPerRepo); ghRepoSems.set(key, per); }
+  // Per-repo first, then global: a repo's queue never sits on global slots.
+  return per.run(() => global.run(spawnIt));
 }
 
 /** Run a fixed command string through the shell (needed for npm.cmd on Windows). */

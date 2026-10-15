@@ -34,7 +34,7 @@ import {
   getIssue, createDraftPr, linkedPullRequests, findPrForBranch,
   prsForBranch, prView, issueReopenInfo, readyPr, addReviewer,
   getChangeRequests, requestReviewForChangeRequest, replyToReviewThread, commentOnPr,
-  checksForOpenPrs,
+  checksForOpenPrs, GhUnavailableError,
   closeIssue, publishIssueComment, addIssueLabels, issueComments, repoLabels, issueOrPrRef,
   CLOSE_COMMENT_MAX,
 } from './github.js';
@@ -448,6 +448,7 @@ const CLASSIFIABLE = ['assigned', 'started', 'waiting_approval', 'done', 'pr_dra
 // an hour instead of every cycle: the backlog of completed cards was most of
 // the `gh` calls of a poll.
 const QUIET_RECHECK_MS = 60 * 60_000;
+const classifyFailLogged = new Set();   // task keys already logged for a gh failure; cleared on success
 const quietChecks = new Map();   // task key -> ms of the last classification
 // «Finished» is `classified`, never the shape of the PR list. Both PR-shaped
 // terms this used to carry answered false for ever on a real card, and a card
@@ -632,8 +633,23 @@ export async function refreshClassification(task, steps = CLASSIFY_STEPS) {
   // A PR the board holds open is asked about live: it is what «Listo para
   // revisión» is about to act on. Everything else can take the minute-old list.
   const boardOwned = ['pr_draft', 'ready'].includes(task.state);
-  const existing = await detectExistingWork(task.issue, { branch: task.branch, cache: !boardOwned, steps, project: task.project });
-  const prs = withStoredMerged(task, await withOwnPr(task, existing.prs, steps));
+  let existing;
+  let prs;
+  try {
+    existing = await detectExistingWork(task.issue, { branch: task.branch, cache: !boardOwned, steps, project: task.project });
+    prs = withStoredMerged(task, await withOwnPr(task, existing.prs, steps));
+  } catch (e) {
+    // GitHub did not answer: that is not «nothing exists». The task keeps its
+    // state, PRs and classification, and is asked again next cycle.
+    if (!(e instanceof GhUnavailableError)) throw e;
+    const k = keyOf(task);
+    if (!classifyFailLogged.has(k)) {
+      classifyFailLogged.add(k);
+      store.addLog(task, 'guard', `⚠️ GitHub did not answer, the classification is kept as it was (${reasonOf(e)})`);
+    }
+    return;
+  }
+  classifyFailLogged.delete(key);
   if (ACTIVE_STATES.includes(task.state) || running.has(key)
     || (task.forced && keepsForced(task)) || task.state !== stateBefore) return;
 
@@ -1958,6 +1974,8 @@ export async function pushNow(issue) {
 /** Test seam for `refreshChecks`. */
 export const refreshChecksDeps = { checksForOpenPrs: ({ project }) => checksForOpenPrs({ project }) };
 
+const projectOfRow = (t) => t.project ?? DEFAULT_PROJECT_ID; // allowlisted: legacy row without project
+
 /**
  * The CI state of every open PR, spread over the tasks that own them.
  *
@@ -1970,7 +1988,6 @@ export const refreshChecksDeps = { checksForOpenPrs: ({ project }) => checksForO
  * with a task that can have a light; the others keep what they had.
  */
 export async function refreshChecks({ projects } = {}) {
-  const projectOfRow = (t) => t.project ?? DEFAULT_PROJECT_ID; // allowlisted: legacy row without project
   // One sweep per project, not one for the board. `checksForOpenPrs` lists the
   // open PRs of ONE repository and keys them by number — and numbers are per
   // repository, so #12 of `app-b` and #12 of `hfs` are different pull
@@ -1986,20 +2003,48 @@ export async function refreshChecks({ projects } = {}) {
     if (!wanted(project)) continue;
     // A project whose repository cannot be resolved must not blank out the
     // others: it gets an empty answer and the remaining sweeps still run.
-    byProject.set(project, await refreshChecksDeps.checksForOpenPrs({ project }).catch(() => new Map()));
+    byProject.set(project, await prefetchChecks(project));
   }
   for (const task of tasks) {
-    // Reassigned away: its card is on the way out, and its CI is not worth a read.
-    if (task.unassigned) continue;
     // Not swept this time: leave its light as it was.
     if (only && !byProject.has(projectOfRow(task))) continue;
+    applyChecksForTask(task, byProject);
+  }
+}
+
+/**
+ * One `checksForOpenPrs` call for a project: its open PRs by number, an empty
+ * Map when it has none, or null when GitHub could not be asked (or the
+ * repository cannot be resolved). null is "unknown", not "no CI": the
+ * consumer keeps the lights it had.
+ */
+export async function prefetchChecks(projectId) {
+  try {
+    const byNumber = await refreshChecksDeps.checksForOpenPrs({ project: projectId });
+    return byNumber instanceof Map ? byNumber : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sets one task's light from `byProject` (project id -> {@link prefetchChecks}
+ * answer). A project missing from the map, or whose answer is null, leaves the
+ * light as it was. Returns whether the task changed.
+ */
+export function applyChecksForTask(task, byProject) {
+  {
+    // Reassigned away: its card is on the way out, and its CI is not worth a read.
+    if (task.unassigned) return false;
+    const swept = byProject.get(projectOfRow(task));
+    if (swept == null) return false;
     // The cycle's PR only. The newest PR on record used to stand in for a
     // missing one, and a merged PR from an earlier cycle is not what the card
     // is waiting on.
     const number = task.prNumber ?? null;
     const found = task.state === 'done' || !number
       ? null
-      : byProject.get(projectOfRow(task))?.get(number) ?? null;
+      : swept.get(number) ?? null;
     // The rollup belongs to the last pushed commit; with work still local, a
     // green light would be talking about somebody else's code.
     const checks = found
@@ -2009,7 +2054,9 @@ export async function refreshChecks({ projects } = {}) {
     if (JSON.stringify(checks ?? null) !== before) {
       task.checks = checks;
       store.touch(task);
+      return true;
     }
+    return false;
   }
 }
 

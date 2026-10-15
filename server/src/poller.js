@@ -12,6 +12,7 @@ import {
 } from './pipeline.js';
 import { findManualKeyword, shouldAskAboutMode } from './mode.js';
 import { evaluateQuota } from './quota.js';
+import * as pipelineNs from './pipeline.js';
 import { Semaphore } from './exec.js';
 import { refreshStackHealth } from './stack.js';
 
@@ -248,10 +249,15 @@ let lastPollAt = null;
 /** What the last finished cycle found; null before any. */
 let lastResult = null;
 
-/** The phases of a cycle, in order; `stepIndex` is the 1-based position here. */
+/** The phases of a cycle, in order; `stepIndex` is the 1-based position here. Phases overlap in time. */
 export const POLL_STEPS = ['listing', 'sweep', 'fetch', 'classify', 'branches', 'checks', 'crs'];
-const idleProgress = () => ({ step: null, stepIndex: 0, stepCount: POLL_STEPS.length, done: 0, total: 0, project: null, progressAt: null });
+const emptyPhases = () => Object.fromEntries(POLL_STEPS.map((n) => [n, { done: 0, total: 0 }]));
+const idleProgress = () => ({
+  step: null, stepIndex: 0, stepCount: POLL_STEPS.length, done: 0, total: 0, project: null, progressAt: null, phases: emptyPhases(),
+});
 let progress = idleProgress();
+/** Phases of the running cycle that have begun (a phase with total 0 may still be «started»). */
+let startedPhases = new Set();
 
 /** A cycle running longer than this is abandoned from the flag's point of view. */
 const WATCHDOG_MS = 10 * 60_000;
@@ -313,18 +319,53 @@ function emitNow() {
   pollEvents.emit('poll', pollStatus());
 }
 
-/** A phase starts: reset the counters and announce it at once. Ignored for a token that is no longer current. */
-function progressStep(token, step, total) {
-  if (current !== token) return;
-  if (trailing) emitNow();   // the last count of the previous phase is not lost
-  progress = { step, stepIndex: POLL_STEPS.indexOf(step) + 1, stepCount: POLL_STEPS.length, done: 0, total, project: null, progressAt: Date.now() };
-  emitNow();
+/**
+ * The phase shown as «current»: the lowest-index one that has started and is
+ * unfinished; when everything started so far is finished (the cycle is between
+ * discoveries), the highest-index started one, so a running cycle never reads idle.
+ */
+function currentStep(phases) {
+  let last = null;
+  for (const name of POLL_STEPS) {
+    if (!startedPhases.has(name)) continue;
+    last = name;
+    if (phases[name].done < phases[name].total) return name;
+  }
+  return last;
 }
 
-/** One project/task finished: counted at once, announced at most once per throttle window, with a trailing emit. */
-function progressBump(token, project = null) {
+function withDerived(phases, project) {
+  const step = currentStep(phases);
+  let done = 0;
+  let total = 0;
+  for (const name of POLL_STEPS) { done += phases[name].done; total += phases[name].total; }
+  return {
+    step, stepIndex: step ? POLL_STEPS.indexOf(step) + 1 : 0, stepCount: POLL_STEPS.length,
+    done, total, project, progressAt: Date.now(), phases,
+  };
+}
+
+/** Work of `phase` discovered: its total grows by `n` (never shrinks) and the phase counts as started. */
+function progressAdd(token, phase, n = 1) {
   if (current !== token) return;
-  progress = { ...progress, done: progress.done + 1, project, progressAt: Date.now() };
+  const before = progress.step;
+  startedPhases.add(phase);
+  const phases = { ...progress.phases, [phase]: { ...progress.phases[phase], total: progress.phases[phase].total + n } };
+  progress = withDerived(phases, progress.project);
+  if (progress.step !== before) emitNow(); else throttledEmit();
+}
+
+/** One unit of `phase` finished: counted at once, announced at most once per throttle window, plus phase-change emits. */
+function progressBump(token, phase, project = null) {
+  if (current !== token) return;
+  const before = progress.step;
+  const cur = progress.phases[phase];
+  const phases = { ...progress.phases, [phase]: { ...cur, done: Math.min(cur.total, cur.done + 1) } };
+  progress = withDerived(phases, project);
+  if (progress.step !== before) emitNow(); else throttledEmit();
+}
+
+function throttledEmit() {
   const wait = hooks.throttleMs - (Date.now() - lastEmitAt);
   if (wait <= 0) { emitNow(); return; }
   if (!trailing) {
@@ -354,6 +395,7 @@ function release(token, result) {
   startedAt = null;
   if (trailing) emitNow();
   progress = idleProgress();
+  startedPhases = new Set();
   lastResult = {
     tasks: result?.tasks ?? 0,
     changeRequests: result?.changeRequests ?? 0,
@@ -409,6 +451,7 @@ export function startPoll({ scheduled = false } = {}) {
   current = token;
   startedAt = Date.now();
   progress = idleProgress();
+  startedPhases = new Set();
   const body = Promise.resolve().then(() => (hooks.runCycle ?? runCycle)(due, token));
   const promise = Promise.race([body, timeout])
     .then((result) => { clearTimeout(token.timer); release(token, result); return result; },
@@ -475,42 +518,38 @@ async function pollProject(project, found, seen) {
 const realSteps = () => ({
   pollProject, sweepClosedIssues, listAllBranches, refreshClassification, refreshBranchStatus,
   refreshStackHealth, refreshChecks, checkChangeRequests, tick, evaluateQuota,
+  // The two halves of the checks (pipeline contract); absent -> the old whole-project refreshChecks is used.
+  prefetchChecks: pipelineNs.prefetchChecks, applyChecksForTask: pipelineNs.applyChecksForTask,
   listTasks: (polling) => store.all().filter((t) => polling.has(t.project) && !t.unassigned),
 });
 
-/** Concurrency of the per-task phases, and of the per-project fetches. */
+/** Per-task work in flight inside ONE project. */
 const TASK_CONCURRENCY = 4;
+/** Per-task STEPS (classify, branches, stack, crs, checks) in flight across all projects. */
+const STEP_CONCURRENCY = 6;
 const FETCH_CONCURRENCY = 3;
-
-/**
- * Runs `fn` over `items` behind `sem`. Every item handles its own errors; once
- * the token is cancelled, items that have not started are skipped and the ones
- * in flight finish.
- */
-async function forEachLimited(items, sem, token, fn) {
-  await Promise.all(items.map((item) => sem.run(async () => {
-    if (token.cancelled) return;
-    await fn(item);
-  })));
-}
 
 /**
  * One cycle. `token` is this cycle's own object: setting `token.cancelled`
  * makes it stop starting work, and only the token that is still the current
  * one may write progress.
+ *
+ * No phase barriers: every due project runs its own chain from t=0, and order
+ * is kept only where one step needs the result of another.
+ *
+ *   per project   listing -> sweep -> (tasks known)
+ *                 fetch (forced) and the GitHub half of the checks start at t=0
+ *   per task      classify || branches   (after sweep AND fetch of the project)
+ *                 classify -> crs, stack health
+ *                 classify + branches -> applyChecks (needs prNumber and unpushed)
+ *   board         tick() once every project is classified, and again at the very end
  */
 export async function runCycle(due, token = {}) {
   const S = { ...realSteps(), ...hooks.steps };
   const found = { tasks: 0, changeRequests: 0, swept: 0 };
   const errors = [];
-  // What each project's listings answered for; a project whose `pollProject`
-  // threw still has an (empty) set, so its sweep asks about every task it has.
-  const seen = new Map(due.map((p) => [p.id, new Set()]));
-  // Every per-task step is filtered by the projects this round is about.
-  // Tasks reassigned away are left out of them (they would only spend `gh`).
-  const polling = new Set(due.map((p) => p.id));
-  const mine = () => S.listTasks(polling);
-  const taskSem = new Semaphore(() => TASK_CONCURRENCY);
+  const splitChecks = typeof S.prefetchChecks === 'function' && typeof S.applyChecksForTask === 'function';
+  const stepSem = new Semaphore(() => STEP_CONCURRENCY);
   const fetchSem = new Semaphore(() => FETCH_CONCURRENCY);
   const cancelled = () => Boolean(token.cancelled);
   const finish = () => {
@@ -523,124 +562,168 @@ export async function runCycle(due, token = {}) {
     return found;
   };
 
-  // 1. The listings, one project at a time (each is two `gh` calls already).
-  progressStep(token, 'listing', due.length);
-  for (const project of due) {
-    if (cancelled()) return finish();
-    try {
-      await S.pollProject(project, found, seen.get(project.id));
-    } catch (e) {
-      console.error(`[poll] ${project.id}: ${e.message}`);
-      errors.push(`${project.id}: ${e.message}`);
-    }
-    progressBump(token, project.id);
-  }
+  /** One task step behind the shared bound; resolves true when it ran (even if it failed), false when skipped by a cancel. */
+  const runStep = (fn, onError) => stepSem.run(async () => {
+    if (cancelled()) return false;
+    try { await fn(); } catch (e) { onError(e); }
+    return true;
+  });
 
-  // 2. What the listings could not say, asked by number. Its own try/catch, so
-  // a failed listing does not skip it and a failed sweep does not discard a
-  // fold. Before the classification: the flag flipped here is acted on in the
-  // SAME cycle.
-  progressStep(token, 'sweep', due.length);
-  for (const project of due) {
-    if (cancelled()) return finish();
+  const chainOf = (project, onClassified) => async () => {
+    const id = project.id;
+    const seen = new Set();
+
+    // t=0, independent of everything else: the forced fetch (so the classification
+    // reads a warm branch cache) and the GitHub half of the checks.
+    progressAdd(token, 'fetch');
+    const fetched = fetchSem.run(async () => {
+      if (cancelled()) return;
+      try {
+        await S.listAllBranches({ project: id, force: true });
+      } catch (e) {
+        console.error(`[poll] ${id}: no se pudieron listar las ramas: ${e.message}`);
+        errors.push(`${id}: ${e.message}`);
+      }
+    }).finally(() => progressBump(token, 'fetch', id));
+    progressAdd(token, 'checks');
+    let prefetched = Promise.resolve(null);
+    if (splitChecks) {
+      prefetched = Promise.resolve().then(() => (cancelled() ? null : S.prefetchChecks(id))).catch((e) => {
+        console.error(`[poll] ${id}: no se pudieron mirar los checks: ${e.message}`);
+        errors.push(`${id}: ${e.message}`);
+        return null;
+      });
+    }
+
+    // listing -> sweep: the hard order of a project.
+    progressAdd(token, 'listing');
+    if (cancelled()) { await fetched; return; }
     try {
-      const counts = await S.sweepClosedIssues(project, seen.get(project.id));
+      await S.pollProject(project, found, seen);
+    } catch (e) {
+      console.error(`[poll] ${id}: ${e.message}`);
+      errors.push(`${id}: ${e.message}`);
+    }
+    progressBump(token, 'listing', id);
+
+    if (cancelled()) { await fetched; return; }
+    progressAdd(token, 'sweep');
+    try {
+      const counts = await S.sweepClosedIssues(project, seen);
       found.swept += counts.flipped + counts.settled;
-      sweepFailures.delete(project.id);
+      sweepFailures.delete(id);
     } catch (e) {
       // Nothing is written on any task: the question was about the repository,
       // and a `gh` that keeps failing the same way says it once.
-      if (sweepFailures.get(project.id) !== e.message) {
-        sweepFailures.set(project.id, e.message);
-        console.error(`[poll] ${project.id}: no se pudo comprobar el estado de los issues: ${e.message}`);
+      if (sweepFailures.get(id) !== e.message) {
+        sweepFailures.set(id, e.message);
+        console.error(`[poll] ${id}: no se pudo comprobar el estado de los issues: ${e.message}`);
       }
+      errors.push(`${id}: ${e.message}`);
+    }
+    progressBump(token, 'sweep', id);
+
+    // Classification and branches both need the warm cache of the forced fetch.
+    await fetched;
+    if (cancelled()) return;
+    const tasks = S.listTasks(new Set([id])).filter((t) => t.project === id);
+    progressAdd(token, 'classify', tasks.length);
+    progressAdd(token, 'branches', tasks.length);
+    progressAdd(token, 'crs', tasks.length);
+
+    const projectSem = new Semaphore(() => TASK_CONCURRENCY);
+    const chains = tasks.map((task) => {
+      let classified;
+      const clsDone = new Promise((r) => { classified = r; });
+      const all = projectSem.run(async () => {
+        try {
+          if (cancelled()) return;
+          const cls = runStep(() => S.refreshClassification(task),
+            (e) => store.addLog(task, 'guard', `⚠️ could not reclassify: ${e.message}`))
+            .then((ran) => { if (ran) progressBump(token, 'classify', id); classified(); return ran; });
+          const br = runStep(() => S.refreshBranchStatus(task),
+            (e) => store.addLog(task, 'merge', `⚠️ could not check the branch state: ${e.message}`))
+            .then((ran) => { if (ran) progressBump(token, 'branches', id); return ran; });
+
+          // After classify only (they read nothing of the branch measurement).
+          const afterClassify = cls.then(async (ran) => {
+            if (!ran || cancelled()) return;
+            await Promise.all([
+              task.stack?.status === 'running'
+                ? runStep(() => S.refreshStackHealth(task), (e) => store.addLog(task, 'stack', `⚠️ could not check the stack: ${e.message}`))
+                : null,
+              runStep(async () => { found.changeRequests += await S.checkChangeRequests(task); },
+                (e) => store.addLog(task, 'cr', `⚠️ could not read the PR reviews: ${e.message}`))
+                .then((ran2) => { if (ran2) progressBump(token, 'crs', id); }),
+            ]);
+          });
+
+          // A PR's checks describe the last pushed commit: they need the PR
+          // from classify and the unpushed count from branches.
+          const afterBoth = splitChecks
+            ? Promise.all([cls, br]).then(async ([a, b]) => {
+              if (!a || !b || cancelled()) return;
+              const map = await prefetched;
+              await runStep(() => S.applyChecksForTask(task, map ? new Map([[id, map]]) : new Map()),
+                (e) => store.addLog(task, 'checks', `⚠️ could not apply the checks: ${e.message}`));
+            })
+            : Promise.resolve();
+          await Promise.all([afterClassify, afterBoth]);
+        } finally {
+          classified();
+        }
+      });
+      return { clsDone, all };
+    });
+
+    await Promise.all(chains.map((c) => c.clsDone));
+    onClassified();
+
+    if (splitChecks) {
+      await Promise.all(chains.map((c) => c.all));
+      if (!cancelled()) progressBump(token, 'checks', id);
+    } else {
+      // Old whole-project checks, after every branch of this project is measured.
+      await Promise.all(chains.map((c) => c.all));
+      if (!cancelled()) {
+        try {
+          await S.refreshChecks({ projects: [id] });
+        } catch (e) {
+          console.error(`[poll] no se pudieron mirar los checks: ${e.message}`);
+          errors.push(e.message);
+        }
+        progressBump(token, 'checks', id);
+      }
+    }
+  };
+
+  // Every project's chain starts now. `classified` resolves when its tasks are
+  // classified or its chain ended for any reason (a failure must not hold the tick).
+  const classified = [];
+  const chainPromises = due.map((project) => {
+    let mark;
+    classified.push(new Promise((r) => { mark = r; }));
+    return chainOf(project, mark)().catch((e) => {
+      console.error(`[poll] ${project.id}: ${e.message}`);
       errors.push(`${project.id}: ${e.message}`);
-    }
-    progressBump(token, project.id);
-  }
-
-  // 3. One forced fetch per project, BEFORE the classification so that it
-  // reads a warm branch cache. Asked for explicitly rather than relied upon as
-  // a side effect: a cycle where every task is busy would skip it, and the
-  // branch status would be measured against a stale origin/main.
-  if (cancelled()) return finish();
-  progressStep(token, 'fetch', due.length);
-  await forEachLimited(due, fetchSem, token, async (project) => {
-    try {
-      await S.listAllBranches({ project: project.id, force: true });
-    } catch (e) {
-      console.error(`[poll] ${project.id}: no se pudieron listar las ramas: ${e.message}`);
-      errors.push(`${project.id}: ${e.message}`);
-    }
-    progressBump(token, project.id);
+    }).finally(() => mark());
   });
 
-  // 4. Classification, per task, behind the shared bound.
-  if (cancelled()) return finish();
-  let tasks = mine();
-  progressStep(token, 'classify', tasks.length);
-  await forEachLimited(tasks, taskSem, token, async (task) => {
-    try {
-      await S.refreshClassification(task);
-    } catch (e) {
-      store.addLog(task, 'guard', `⚠️ could not reclassify: ${e.message}`);
-    }
-    progressBump(token, task.project);
+  // The early tick: the board-wide gate (task cap, queue) as soon as all
+  // classification is in; idempotent, so the final one below is harmless.
+  const early = Promise.all(classified).then(() => {
+    if (cancelled()) return;
+    try { S.tick(); } catch (e) { console.error(`[poll] tick: ${e.message}`); }
   });
 
-  // 5. How each branch stands against main; then the stacks the board believes
-  // are up, asked whether they are (a server can stop answering without its
-  // exit ever reaching the board).
-  if (cancelled()) return finish();
-  tasks = mine();
-  progressStep(token, 'branches', tasks.length);
-  await forEachLimited(tasks, taskSem, token, async (task) => {
-    try {
-      await S.refreshBranchStatus(task);
-    } catch (e) {
-      store.addLog(task, 'merge', `⚠️ could not check the branch state: ${e.message}`);
-    }
-    progressBump(token, task.project);
-  });
-  await forEachLimited(tasks.filter((t) => t.stack?.status === 'running'), taskSem, token, async (task) => {
-    try {
-      await S.refreshStackHealth(task);
-    } catch (e) {
-      store.addLog(task, 'stack', `⚠️ could not check the stack: ${e.message}`);
-    }
-  });
-
-  // 6. After the branches, never before: a PR's checks describe the last
-  // pushed commit, so knowing whether anything is still local is what says if
-  // that green light is talking about your code at all.
-  if (cancelled()) return finish();
-  progressStep(token, 'checks', due.length);
-  try {
-    await S.refreshChecks({ projects: due.map((p) => p.id) });
-  } catch (e) {
-    console.error(`[poll] no se pudieron mirar los checks: ${e.message}`);
-    errors.push(e.message);
-  }
-  for (const p of due) progressBump(token, p.id);
-
-  // 7. Change requests: a task waiting for approval may have had changes
-  // requested on its PR since the last look.
-  if (cancelled()) return finish();
-  tasks = mine();
-  progressStep(token, 'crs', tasks.length);
-  await forEachLimited(tasks, taskSem, token, async (task) => {
-    try {
-      found.changeRequests += await S.checkChangeRequests(task);
-    } catch (e) {
-      store.addLog(task, 'cr', `⚠️ could not read the PR reviews: ${e.message}`);
-    }
-    progressBump(token, task.project);
-  });
+  await Promise.all(chainPromises);
+  await early;
 
   // Both are local and account-wide: the task cap and the quota hold belong to
   // the board, not to a project. They run even after a failed listing or a
   // cancellation, so one repository GitHub cannot answer for does not stop the
-  // other's queued task from starting.
+  // other's queued task from starting. The second tick picks up change requests
+  // registered late.
   S.tick();
   S.evaluateQuota();
   return finish();
