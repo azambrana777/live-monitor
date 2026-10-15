@@ -28,10 +28,10 @@ test('la tarjeta ya no usa las etiquetas viejas', () => {
 test('la raíz es `tc` y los controles de más van en `tc-groups`, tras el botón de ampliar', () => {
   assert.match(card, /className=\{cls\}/);
   assert.match(card, /const cls = \['tc', `tc-\$\{info\.tone\}`/);
-  assert.match(card, /<article id=\{cid\} className=\{cls\}>/);
+  assert.match(card, /<article id=\{cid\} className=\{cls\} onPointerEnter=\{armHover\}/);
   // Closed and lengthened are the same body: the lengthened one only adds the groups.
   assert.match(card, /const \[expanded, setExpanded\] = useState\(false\);/);
-  assert.match(card, /<ExpandButton expanded=\{expanded\} onToggle=\{\(\) => setExpanded\(\(v\) => !v\)\} controls=\{`\$\{cid\}-controls`\} \/>/);
+  assert.match(card, /<ExpandButton expanded=\{expanded\} onToggle=\{toggleExpanded\} controls=\{`\$\{cid\}-controls`\} \/>/);
   assert.match(card, /<div className="tc-groups" id=\{`\$\{cid\}-controls`\}>/);
   // Six groups, in the order of the BRIEF §6.
   const order = ['DecisionGroup', 'WorkGroup', 'CodeGroup', 'EnvGroup', 'SettingsGroup', 'DangerGroup']
@@ -135,4 +135,18 @@ test('a TaskCard prop is never declared again as a local', () => {
     assert.doesNotMatch(card, new RegExp(`\\n\\s*(?:const|let|var) ${name}\\b`), `${name} is a prop and is declared again`);
   }
   assert.ok(props.includes('inflightKeys'), 'the in-flight set has its own name');
+});
+
+test('hover: 1000 ms de reposo abre, salir cierra con 150 ms de gracia, el clic ancla', () => {
+  assert.match(card, /const HOVER_OPEN_MS = 1000;/);
+  assert.match(card, /const HOVER_LEAVE_MS = 150;/);
+  assert.match(card, /onPointerEnter=\{armHover\} onPointerMove=\{armHover\} onPointerLeave=\{onCardLeave\}/);
+  assert.match(card, /e\.buttons !== 0/);
+  assert.match(card, /e\.pointerType !== 'mouse' \|\| suppressHover\.current\) return;/);
+  assert.match(card, /const suppressHover = useRef\(false\);/);
+  assert.match(card, /pinned\.current = false; suppressHover\.current = true; setExpanded\(false\)/);
+  assert.match(card, /const onCardLeave = \(\) => \{\s*suppressHover\.current = false;/);
+  assert.match(card, /const pinned = useRef\(false\);/);
+  assert.match(card, /pinned\.current = true; setExpanded\(true\)/);
+  assert.match(card, /useEffect\(\(\) => clearTimers, \[\]\);/);
 });

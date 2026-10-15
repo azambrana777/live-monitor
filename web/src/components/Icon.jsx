@@ -2,9 +2,9 @@ import React from 'react';
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Ban, Bandage, Bot, Brain, ChartColumn, ChartLine,
   ChevronDown, ChevronLeft, ChevronRight, Check, CircleCheck, CircleHelp, CircleMinus, CircleStop,
-  CircleX, Circle, ClipboardList, Command, Compass, Construction, Copy, Ellipsis, ExternalLink, Eye,
+  CircleX, Circle, ClipboardList, Command, Compass, Construction, Copy, Ellipsis, ExternalLink, Eye, EyeOff,
   File, FileCode, FilePen, FileText, Film, Flame, FlaskConical, Folder, FolderGit2, GitBranch,
-  GitPullRequest, Hand, History, Hourglass, Image, Inbox, Info, KeyRound, Layers, Lightbulb, Link,
+  GitPullRequest, Hand, History, Hourglass, Image, Inbox, Info, KeyRound, LayoutGrid, Layers, Lightbulb, Link,
   LoaderCircle, Lock, MapPin, Maximize2, Menu, MessageSquare, Mic, Minimize2, Minus, Moon, Palette,
   Paperclip, Pause, Pencil, Pin, Play, Plug, Plus, Puzzle, Recycle, Redo2, RefreshCw, Repeat, Rocket,
   RotateCcw, ScrollText, Search, Server, Settings, SkipForward, SlidersHorizontal, Sprout, Terminal,
@@ -41,6 +41,8 @@ import {
  *   🧭                   compass          Compass
  *   🩹                   bandage          Bandage
  *   👀                   eye              Eye
+ *   (none)               eye-off          EyeOff           (restricted / hide a project)
+ *   (none)               grid             LayoutGrid       (card grid, manage projects)
  *   🔴 🟢 🟡 ● • ·       dot              Circle (filled)  (colour it with className)
  *   ○                    circle           Circle
  *   ✋                   hand             Hand
@@ -143,6 +145,8 @@ const ICONS = {
   compass: Compass,
   bandage: Bandage,
   eye: Eye,
+  'eye-off': EyeOff,
+  grid: LayoutGrid,
   dot: Circle, // drawn filled, see below
   circle: Circle,
   hand: Hand,

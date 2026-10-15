@@ -6,7 +6,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 52px;
+  height: var(--tb-h);
   padding: 0 12px 0 16px;
   box-sizing: border-box;
   background: var(--col);

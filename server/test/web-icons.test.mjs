@@ -59,3 +59,9 @@ test('no two names share a Lucide component, except dot/circle', () => {
     seen.set(comp, key);
   }
 });
+
+test('eye-off and grid are mapped, one concept one name', () => {
+  assert.equal(byKey.get('eye-off'), 'EyeOff');
+  assert.equal(byKey.get('grid'), 'LayoutGrid');
+  assert.ok(imported.has('EyeOff') && imported.has('LayoutGrid'));
+});

@@ -206,7 +206,6 @@ test('saveProjects es el único que escribe, y valida antes de escribir', async 
   const { saveProjects, listProjects } = await withProjectsFile(undefined);
 
   assert.throws(() => saveProjects([entry({ overrides: { access: { token: 'x' } } })]), /overrides\.access\.token:/);
-  assert.throws(() => saveProjects([]), /cannot be empty/);
   // Nada de eso llegó al disco: el registro sigue siendo la siembra.
   assert.deepEqual(listProjects().map((p) => p.id), [DEFAULT_PROJECT_ID]);
 
@@ -453,5 +452,56 @@ test('setBaseBranch: live through the single writer, validated first, unknown pr
   assert.throws(() => setBaseBranch('nadie', 'main'), /no project is registered as/);
   assert.equal(JSON.stringify(projectOf('beta')), before, 'a refused change writes nothing');
   assert.equal(JSON.parse(readFileSync(FILE, 'utf8'))[0].baseBranch, 'main');
+  rmSync(FILE, { force: true });
+});
+
+// --- restricted / removeProject ---------------------------------------------
+
+test('restricted is stored only when true and round-trips; setProjectRestricted toggles it', async () => {
+  const { setProjectRestricted, listProjects, saveProjects } = await withProjectsFile([entry(), entry({ id: 'gamma', restricted: false })]);
+  assert.equal(Object.hasOwn(listProjects()[1], 'restricted'), false, 'false is not stored');
+  assert.throws(() => saveProjects([entry({ restricted: 'yes' })]), /restricted: expected true or false/);
+
+  assert.equal(setProjectRestricted('beta', true).restricted, true);
+  assert.equal(JSON.parse(readFileSync(FILE, 'utf8'))[0].restricted, true);
+  const reloaded = await withProjectsFile(JSON.parse(readFileSync(FILE, 'utf8')));
+  assert.equal(reloaded.projectOf('beta').restricted, true, 'survives a reload');
+
+  const off = reloaded.setProjectRestricted('beta', false);
+  assert.equal(Object.hasOwn(off, 'restricted'), false);
+  assert.equal(Object.hasOwn(JSON.parse(readFileSync(FILE, 'utf8'))[0], 'restricted'), false);
+  assert.throws(() => reloaded.setProjectRestricted('ghost', true), /ghost/);
+  assert.throws(() => reloaded.setProjectRestricted('beta', 'x'), /expected true or false/);
+  rmSync(FILE, { force: true });
+});
+
+test('removeProject drops only that entry, allows an empty registry and honours an explicit []', async () => {
+  const { removeProject, listProjects } = await withProjectsFile([entry(), entry({ id: 'gamma' })]);
+  removeProject('beta');
+  assert.deepEqual(listProjects().map((p) => p.id), ['gamma']);
+  assert.deepEqual(JSON.parse(readFileSync(FILE, 'utf8')).map((p) => p.id), ['gamma']);
+  assert.throws(() => removeProject('beta'), /beta/);
+
+  removeProject('gamma');
+  assert.deepEqual(listProjects(), []);
+  assert.equal(readFileSync(FILE, 'utf8').trim(), '[]');
+  const fresh = await withProjectsFile([]);
+  assert.deepEqual(fresh.listProjects(), [], 'an explicit empty file does not fall back to the seed');
+  rmSync(FILE, { force: true });
+});
+
+test('removing the seed (no projects.json) persists an empty list instead of re-seeding', async () => {
+  const { removeProject, listProjects } = await withProjectsFile(undefined);
+  removeProject(DEFAULT_PROJECT_ID);
+  assert.deepEqual(listProjects(), []);
+  assert.equal(readFileSync(FILE, 'utf8').trim(), '[]');
+  rmSync(FILE, { force: true });
+});
+
+test('a removed project can be added again under the same id', async () => {
+  const { removeProject, saveProjects, listProjects } = await withProjectsFile([entry(), entry({ id: 'gamma' })]);
+  removeProject('beta');
+  saveProjects([...listProjects(), entry()]);
+  assert.deepEqual(listProjects().map((p) => p.id), ['gamma', 'beta']);
   rmSync(FILE, { force: true });
 });

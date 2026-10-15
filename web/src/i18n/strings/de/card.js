@@ -46,6 +46,7 @@ export default {
     worktreeTitle: 'Den Stack stoppen und den Worktree löschen, um Speicherplatz freizugeben (Branch und PR bleiben erhalten)',
     worktreeHelp: 'Stoppt den Stack und löscht den Ordner auf {machine}. Branch und PR bleiben erhalten.',
     worktreeLocked: 'Worktree löschen: wenn die Aufgabe stoppt',
+    worktreeDelete: 'Worktree löschen',
     closeIssue: 'Issue schließen',
     closePublishing: 'Der Abschluss wird auf GitHub veröffentlicht…',
     closeNeedsWorktree: 'Braucht einen Worktree: Die Sitzung, die den Vorschlag schreibt, läuft darin, und nur so kann sie Pfade zitieren',

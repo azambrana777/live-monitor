@@ -481,11 +481,22 @@ async function runCycle(due) {
  * flight instead of starting another — so N timers would collapse into one
  * queue anyway, having cost N clocks to re-arm on every settings change.
  */
+export function shortestPollMinutes(minutes) {
+  const m = Math.min(...minutes);
+  return Number.isFinite(m) && m > 0 ? m : null;
+}
+
 export function startPolling() {
   let timer = null;
   let period = null;
   const arm = () => {
-    const minutes = Math.min(...listProjects().map((p) => settings.pollIntervalMinutesFor(p.id)));
+    const minutes = shortestPollMinutes(listProjects().map((p) => settings.pollIntervalMinutesFor(p.id)));
+    if (minutes === null) { // no projects: nothing to poll, and Infinity would fire every 1 ms
+      if (timer) clearInterval(timer);
+      timer = null;
+      period = null;
+      return;
+    }
     if (period === minutes) return;
     period = minutes;
     if (timer) clearInterval(timer);

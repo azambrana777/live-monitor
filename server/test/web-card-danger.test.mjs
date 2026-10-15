@@ -56,3 +56,12 @@ test('la franja roja izquierda vive en card-danger.css', () => {
   assert.match(css, /\.tcx-danger::before/);
   assert.match(css, /color-mix\(in oklab, var\(--red\) 55%, transparent\)/);
 });
+
+test('la papelera de la tarjeta cerrada: solo completada, con worktree y sin trabajar', () => {
+  const card = read('components/TaskCard.jsx');
+  pin('card.danger.worktreeDelete', 'Eliminar worktree');
+  assert.match(card, /const canTrash = \(compact \|\| task\.state === 'done'\) && task\.hasWorktree && !busy;/);
+  assert.match(card, /\{canTrash && \(\s*<button type="button" className="btn btn-icon btn-danger tc-foot-trash"/);
+  assert.match(card, /e\.stopPropagation\(\); h\.onDeleteWorktree\(task\.issue\);/);
+  assert.match(card, /<Icon name="trash" \/>\s*<\/button>\s*\)\}\s*<\/footer>/);
+});

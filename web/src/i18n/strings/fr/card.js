@@ -46,6 +46,7 @@ export default {
     worktreeTitle: 'Arrêter le stack et supprimer le worktree pour libérer du disque (la branche et la PR sont conservées)',
     worktreeHelp: 'Arrête le stack et supprime le dossier sur {machine}. La branche et la PR sont conservées.',
     worktreeLocked: 'Supprimer le worktree : quand la tâche s’arrêtera',
+    worktreeDelete: 'Supprimer le worktree',
     closeIssue: 'Fermer l’issue',
     closePublishing: 'Publication de la fermeture sur GitHub…',
     closeNeedsWorktree: 'Il faut un worktree : la session qui rédige la proposition tourne dedans, ce qui lui permet de citer des chemins',

@@ -71,11 +71,20 @@ test('every piece of the old bar is still reachable', () => {
   assert.match(topbar, /t\.topbar\.bar\.reconnecting\b/);
 });
 
-test('the project picker no longer imports projects (it moved to the «···» menu)', () => {
+test('the project picker is a button + popover, not a select, and never imports projects', () => {
   assert.doesNotMatch(picker, /Importar proyecto/);
   assert.doesNotMatch(picker, /ImportProjectDialog/);
-  assert.match(picker, /export default function ProjectPicker\(/);
-  assert.match(picker, /onImported/);
+  assert.doesNotMatch(picker, /<select/);
+  assert.ok(picker.includes('export default function ProjectPicker('));
+  assert.match(picker, /<Popover /);
+  assert.match(picker, /onSelect, onToggleRestricted, onRemove, onManage/);
+});
+
+test('Topbar forwards the project-management props to the picker', () => {
+  assert.match(topbar, /onToggleRestricted, onRemoveProject, onManageProjects/);
+  assert.ok(topbar.includes('onRemove={onRemoveProject}'));
+  assert.ok(topbar.includes('onManage={onManageProjects}'));
+  assert.ok(topbar.includes('onToggleRestricted={onToggleRestricted}'));
 });
 
 test('no old layout class survives in the bar files', () => {
