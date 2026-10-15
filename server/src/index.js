@@ -37,7 +37,7 @@ import { hasCommits, isProjectWorktree, pendingWork } from './worktree.js';
 import { startStack, stopStack, publicStack } from './stack.js';
 import { saveAttachment, acceptedAttachments } from './attachments.js';
 import { validatePrompts } from './prompts.js';
-import { accessGuard, socketRefusal, describeAccess } from './access.js';
+import { accessGuard, socketRefusal, describeAccess, listenHost } from './access.js';
 import { chatsOf, chatById, isChatBusy, chatRunning } from './chats.js';
 import { planProgress } from './planexec.js';
 import { filesRouter } from './files.js';
@@ -1611,8 +1611,14 @@ wss.on('connection', (socket, request) => {
   });
 });
 
+// The listen address is fixed at boot; a token added or removed later changes
+// what it should be but not what it is.
+let bootHost;
 configEvents.on('change', ({ needsRestart }) => {
   console.log('config.json recargado; se aplica a partir de la próxima fase');
+  if (listenHost() !== bootHost) {
+    console.log(`  (reinicia para que el tablero escuche en ${listenHost() ?? 'todas las interfaces'})`);
+  }
   if (needsRestart.length) {
     console.log(`  (requiere reinicio para: ${needsRestart.join(', ')})`);
   }
@@ -1627,7 +1633,8 @@ configEvents.on('invalid', (e) => {
 // crash guard exits with 1 and the restart and upgrade scripts see a dead board.
 const promptCount = validatePrompts();
 
-server.listen(config.port, () => {
+bootHost = listenHost();
+server.listen(config.port, bootHost, () => {
   // From here on the board exists and holds state: the crash guard stops
   // treating a failure as "it never started" and starts keeping the process up.
   listening = true;

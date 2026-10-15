@@ -267,3 +267,132 @@ test('socketAllowed / socketRefusal: Host ajeno, Origin ajeno o null, y sin toke
   assert.equal(access.socketRefusal(socket({ host: 'localhost:7420', origin: 'http://localhost:7420' })), null);
   assert.equal(access.socketAllowed(socket({ host: 'localhost:7420' })), true);
 });
+
+// --- No token configured: the board must not be open to the network -----------
+
+const LAN = '192.168.1.50';
+
+/** Runs `fn` with `config.access` replaced, then puts the suite's access config back. */
+async function withAccess(next, fn) {
+  const prev = config.access;
+  config.access = next;
+  try {
+    return await fn();
+  } finally {
+    config.access = prev;
+  }
+}
+
+const NO_TOKEN = { token: '', trustedTailscaleUsers: [TRUSTED] };
+const base = { remoteAddress: '127.0.0.1', headerToken: undefined, queryToken: undefined, cookieHeader: undefined, forwardedFor: undefined, tailscaleUser: undefined };
+
+test('sin token: isAllowed acepta loopback directo', async () => {
+  await withAccess(NO_TOKEN, () => {
+    assert.equal(access.isAllowed(base), true);
+    assert.equal(access.isAllowed({ ...base, remoteAddress: '::1' }), true);
+    assert.equal(access.isAllowed({ ...base, remoteAddress: '::ffff:127.0.0.1' }), true);
+  });
+});
+
+test('sin token: isAllowed rechaza una dirección que no es loopback', async () => {
+  await withAccess(NO_TOKEN, () => {
+    assert.equal(access.isAllowed({ ...base, remoteAddress: LAN }), false);
+  });
+});
+
+test('sin token: una cabecera de token vacía no abre la puerta', async () => {
+  await withAccess(NO_TOKEN, () => {
+    assert.equal(access.isAllowed({ ...base, remoteAddress: LAN, headerToken: '' }), false);
+    assert.equal(access.isAllowed({ ...base, remoteAddress: LAN, queryToken: '' }), false);
+    assert.equal(access.isAllowed({ ...base, remoteAddress: LAN, cookieHeader: `${access.COOKIE}=` }), false);
+    assert.equal(access.isAllowed({ ...base, headerToken: '', forwardedFor: '100.64.0.7' }), false);
+  });
+});
+
+test('sin token: loopback reenviado por un proxy se trata como remoto', async () => {
+  await withAccess(NO_TOKEN, () => {
+    assert.equal(access.isAllowed({ ...base, forwardedFor: '100.64.0.7' }), false);
+    assert.equal(access.isAllowed({ ...base, tailscaleUser: 'otro@example.com' }), false);
+  });
+});
+
+test('sin token: el usuario Tailscale de confianza sigue entrando', async () => {
+  await withAccess(NO_TOKEN, () => {
+    assert.equal(access.isAllowed({ ...base, forwardedFor: '100.64.0.7', tailscaleUser: TRUSTED }), true);
+  });
+});
+
+test('sin access en la configuración equivale a sin token', async () => {
+  await withAccess(undefined, () => {
+    assert.equal(access.isAllowed(base), true);
+    assert.equal(access.isAllowed({ ...base, remoteAddress: LAN }), false);
+  });
+});
+
+test('con token: igual que siempre', async () => {
+  await withAccess({ token: TOKEN, trustedTailscaleUsers: [TRUSTED] }, () => {
+    assert.equal(access.isAllowed(base), true, 'localhost exento');
+    assert.equal(access.isAllowed({ ...base, remoteAddress: LAN }), false);
+    assert.equal(access.isAllowed({ ...base, remoteAddress: LAN, headerToken: TOKEN }), true);
+    assert.equal(access.isAllowed({ ...base, remoteAddress: LAN, queryToken: TOKEN }), true);
+    assert.equal(access.isAllowed({ ...base, remoteAddress: LAN, cookieHeader: `${access.COOKIE}=${TOKEN}` }), true);
+    assert.equal(access.isAllowed({ ...base, remoteAddress: LAN, headerToken: 'otro' }), false);
+    assert.equal(access.isAllowed({ ...base, forwardedFor: '100.64.0.7' }), false, 'proxied sin credencial');
+    assert.equal(access.isAllowed({ ...base, forwardedFor: '100.64.0.7', tailscaleUser: TRUSTED }), true);
+  });
+});
+
+test('sin token: accessGuard responde 401 a una petición reenviada y 200 a la directa', async () => {
+  await withAccess(NO_TOKEN, async () => {
+    const host = 'localhost:7420';
+    const proxied = await call({ headers: { host, 'x-forwarded-for': '203.0.113.9' } });
+    assert.equal(proxied.status, 401);
+    const empty = await call({ headers: { host, 'x-forwarded-for': '203.0.113.9', 'x-hfsmon-token': '' } });
+    assert.equal(empty.status, 401, 'token vacío tampoco');
+    const direct = await call({ headers: { host } });
+    assert.equal(direct.status, 200);
+  });
+});
+
+test('sin token: socketRefusal pide token a una dirección que no es loopback', async () => {
+  await withAccess(NO_TOKEN, () => {
+    const lan = { host: `${LAN}:7420`, remoteAddress: LAN };
+    assert.equal(access.socketRefusal(socket({ ...lan, host: 'localhost:7420' })), 'token');
+    assert.equal(access.socketAllowed(socket({ ...lan, host: 'localhost:7420' })), false);
+    assert.equal(access.socketRefusal(socket({ host: 'localhost:7420', remoteAddress: LAN, url: '/ws?token=' })), 'token');
+    assert.equal(access.socketRefusal(socket({ host: 'localhost:7420', extra: { 'x-forwarded-for': '100.64.0.7' } })), 'token');
+    assert.equal(access.socketRefusal(socket({ host: 'localhost:7420' })), null, 'loopback directo');
+  });
+});
+
+test('con token: socketRefusal deja pasar a una dirección remota con el token', async () => {
+  await withAccess({ token: TOKEN }, () => {
+    const remote = { host: 'localhost:7420', remoteAddress: LAN };
+    assert.equal(access.socketRefusal(socket(remote)), 'token');
+    assert.equal(access.socketRefusal(socket({ ...remote, url: `/ws?token=${TOKEN}` })), null);
+    assert.equal(access.socketRefusal(socket({ ...remote, extra: { 'x-hfsmon-token': TOKEN } })), null);
+  });
+});
+
+test('listenHost: loopback sin token, todas las interfaces con token', async () => {
+  assert.equal(typeof access.listenHost, 'function', 'access.js exporta listenHost()');
+  await withAccess(NO_TOKEN, () => assert.equal(access.listenHost(), '127.0.0.1'));
+  await withAccess(undefined, () => assert.equal(access.listenHost(), '127.0.0.1'));
+  await withAccess({ token: TOKEN }, () => assert.equal(access.listenHost(), undefined));
+});
+
+test('describeAccess cuenta la situación real y cómo poner el token', async () => {
+  await withAccess(NO_TOKEN, () => {
+    const msg = access.describeAccess();
+    assert.match(msg, /SIN TOKEN/);
+    assert.match(msg, /127\.0\.0\.1/);
+    assert.match(msg, /access\.token/);
+    assert.match(msg, /config\.local\.json/);
+  });
+  await withAccess({ token: TOKEN }, () => {
+    const msg = access.describeAccess();
+    assert.doesNotMatch(msg, /SIN TOKEN/);
+    assert.match(msg, /token/);
+    assert.match(msg, /localhost exento/);
+  });
+});

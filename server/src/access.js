@@ -193,13 +193,16 @@ const isApi = (p) => p === '/api' || String(p).startsWith('/api/');
  */
 export function isAllowed({ remoteAddress, headerToken, queryToken, cookieHeader, forwardedFor, tailscaleUser }) {
   const expected = token();
-  if (!expected) return true;                       // no token configured: open, as before
 
   const local = isLoopback(remoteAddress);
   const proxied = Boolean(forwardedFor || tailscaleUser);
 
   if (local && !proxied) return true;               // a browser on this machine
   if (local && tailscaleUser && trustedUsers().includes(tailscaleUser)) return true;
+
+  // No token configured: nobody else gets in. Without this guard an empty
+  // credential would equal the empty expected token.
+  if (!expected) return false;
 
   return headerToken === expected
     || queryToken === expected
@@ -272,9 +275,16 @@ export function socketRefusal(request) {
 /** Same check for the WebSocket upgrade, which carries no custom headers. */
 export const socketAllowed = (request) => socketRefusal(request) === null;
 
-/** Warns at boot when the board is reachable from elsewhere with nothing in front. */
+/**
+ * Where the board listens: loopback only while no token is configured, every
+ * interface (`undefined`, Node's default) once there is one.
+ */
+export const listenHost = () => (token() ? undefined : '127.0.0.1');
+
+/** Boot message: the real bind and, without a token, how to open the board. */
 export function describeAccess() {
   return token()
-    ? 'acceso remoto protegido por token (localhost exento)'
-    : 'SIN TOKEN: cualquiera que alcance este puerto puede ejecutar comandos en esta máquina';
+    ? 'escucha en todas las interfaces; acceso remoto protegido por token (localhost exento)'
+    : 'SIN TOKEN: solo se escucha en 127.0.0.1 (esta máquina). Para abrir el tablero a la red, '
+      + 'pon access.token en config.local.json y reinicia';
 }
