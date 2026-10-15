@@ -1,4 +1,4 @@
-import React, { Fragment, useState } from 'react';
+import React, { Fragment, useEffect, useState } from 'react';
 import Icon from '../Icon.jsx';
 import Popover, { usePopover } from '../ui/Popover.jsx';
 import SegmentedControl from '../ui/SegmentedControl.jsx';
@@ -7,6 +7,7 @@ import StateButton from '../ui/StateButton.jsx';
 import RequiredPluginsDialog from '../RequiredPluginsDialog.jsx';
 import { usePlugins } from '../../usePlugins.js';
 import { DUO_OPTIONS, TRI_OPTIONS, projectTriState, triToProject } from '../../settingState.js';
+import { HOVER_DELAY_OPTIONS, onHoverDelayChange, readHoverDelay, writeHoverDelay } from '../../cardHover.js';
 import { useStrings, useLocale } from '../../i18n/useStrings.js';
 import { LOCALES, fill, plural, setLocale, splitAround, strings } from '../../i18n/index.js';
 
@@ -43,6 +44,16 @@ const Named = ({ name, sub }) => (
     {sub && <span className="sm-sub">{sub}</span>}
   </span>
 );
+
+/** «Off», «1 s», «2 s»…: how a hover delay is written, in the current language. */
+const hoverLabel = (t, ms) => (ms ? fill(t.topbar.settings.hoverSeconds, { n: ms / 1000 }) : t.topbar.settings.hoverOff);
+
+/** The hover delay of this browser, live: the cards and this row follow the same event. */
+function useHoverDelay() {
+  const [ms, setMs] = useState(readHoverDelay);
+  useEffect(() => onHoverDelayChange(() => setMs(readHoverDelay())), []);
+  return ms;
+}
 
 /** «1 plugin · falta en runner-1», or «N requeridos · todo instalado». */
 function pluginsSummary(t, state, chips) {
@@ -96,6 +107,7 @@ export default function SettingsMenu({
       onClick={() => saveProjectSetting({ [key]: null })}><Icon name="reset" /></button>
   ) : null);
 
+  const hoverMs = useHoverDelay();
   const plugins = pluginsSummary(t, state, chips);
   const maxTasks = settings.maxActiveTasks;
 
@@ -202,6 +214,14 @@ export default function SettingsMenu({
                   <Icon name="chevron-down" />
                 </span>
               </span>
+            </SettingRow>
+
+            <SettingRow layout="inline" icon="maximize"
+              name={<Named name={t.topbar.settings.hoverName} sub={hoverLabel(t, hoverMs)} />}
+              title={t.topbar.settings.hoverTitle}>
+              <SegmentedControl context="menu" size="sm" label={t.topbar.settings.hoverName} className="sm-hover" value={hoverMs}
+                options={HOVER_DELAY_OPTIONS.map((ms) => ({ value: ms, label: hoverLabel(t, ms) }))}
+                onChange={writeHoverDelay} />
             </SettingRow>
 
             <button type="button" className="sm-plugins" aria-haspopup="dialog" title={t.topbar.settings.pluginsTitle}

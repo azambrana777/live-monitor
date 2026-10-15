@@ -21,6 +21,8 @@ import CodeGroup, { ReadyButton, PrLink } from './card/CodeGroup.jsx';
 import EnvGroup, { PlacesList } from './card/EnvGroup.jsx';
 import SettingsGroup from './card/SettingsGroup.jsx';
 import DangerGroup from './card/DangerGroup.jsx';
+import { readHoverDelay, onHoverDelayChange } from '../cardHover.js';
+import { nextTap, TAP_SLOP_PX, TAP_IGNORE } from '../doubleTap.js';
 import { useStrings } from '../i18n/useStrings.js';
 import { fill, plural, splitAround, strings } from '../i18n/index.js';
 
@@ -144,8 +146,8 @@ function ChangeBaseControl({ task, onChangeBase }) {
   );
 }
 
-// Pointer rest before a card lengthens by itself, and grace before it shortens again.
-const HOVER_OPEN_MS = 1000;
+// Grace before a hover-opened card shortens again once the pointer is gone. The
+// rest before it opens is the user's choice (readHoverDelay, 0 = off).
 const HOVER_LEAVE_MS = 150;
 
 export default function TaskCard({
@@ -206,7 +208,7 @@ export default function TaskCard({
   // Lengthened in place, inside its own column: the extra controls are the
   // `tc-groups` below the body, never a second copy of it.
   // Two ways open: a click PINS it (stays until the button shortens it); resting
-  // the pointer on the card for HOVER_OPEN_MS opens it only while it is over it.
+  // the pointer on the card for the chosen delay opens it only while it is over it.
   const [expanded, setExpanded] = useState(false);
   const pinned = useRef(false);
   // Set when the user collapses with the button: the pointer is still over the
@@ -216,6 +218,15 @@ export default function TaskCard({
   const leaveTimer = useRef(null);
   const expandedRef = useRef(false);
   expandedRef.current = expanded;
+  // True from the moment the hover timer opens the card (set synchronously, so a
+  // leave before the re-render still collapses it) until it closes or is pinned.
+  const hoverOpened = useRef(false);
+  // The rest the user chose, kept fresh without re-rendering; 0 = hover off.
+  const hoverMs = useRef(readHoverDelay());
+  useEffect(() => {
+    hoverMs.current = readHoverDelay();
+    return onHoverDelayChange(() => { hoverMs.current = readHoverDelay(); });
+  }, []);
   const clearTimers = () => {
     clearTimeout(hoverTimer.current);
     clearTimeout(leaveTimer.current);
@@ -228,26 +239,60 @@ export default function TaskCard({
     clearTimeout(hoverTimer.current);
     hoverTimer.current = null;
     if (e.pointerType !== 'mouse' || suppressHover.current) return;
-    if (expandedRef.current || e.buttons !== 0) return;
+    if (hoverMs.current <= 0 || expandedRef.current || e.buttons !== 0) return;
     hoverTimer.current = setTimeout(() => {
       hoverTimer.current = null;
-      if (!expandedRef.current) setExpanded(true);
-    }, HOVER_OPEN_MS);
+      if (expandedRef.current || pinned.current) return;
+      hoverOpened.current = true;
+      setExpanded(true);
+    }, hoverMs.current);
   };
+  // Pointer left (or was lost): cancel a pending open; close what hover opened.
   const onCardLeave = () => {
     suppressHover.current = false;
     clearTimeout(hoverTimer.current);
     hoverTimer.current = null;
-    if (!expandedRef.current || pinned.current) return;
+    tapStart.current = null;
+    if (pinned.current || !(hoverOpened.current || expandedRef.current)) return;
     clearTimeout(leaveTimer.current);
     leaveTimer.current = setTimeout(() => {
       leaveTimer.current = null;
-      if (!pinned.current) setExpanded(false);
+      if (pinned.current) return;
+      hoverOpened.current = false;
+      setExpanded(false);
     }, HOVER_LEAVE_MS);
   };
   const toggleExpanded = () => {
     clearTimers();
+    hoverOpened.current = false;
     if (expandedRef.current) { pinned.current = false; suppressHover.current = true; setExpanded(false); } else { pinned.current = true; setExpanded(true); }
+  };
+  // Touch / pen: a double tap on the card body toggles it like the button does.
+  const lastTap = useRef(null);
+  const tapStart = useRef(null);
+  const onTapDown = (e) => {
+    if (e.pointerType === 'mouse') return;
+    tapStart.current = e.target.closest?.(TAP_IGNORE) ? null : { x: e.clientX, y: e.clientY };
+    if (!tapStart.current) lastTap.current = null;
+  };
+  const onTapMove = (e) => {
+    if (e.pointerType === 'mouse' || !tapStart.current) return;
+    if (Math.hypot(e.clientX - tapStart.current.x, e.clientY - tapStart.current.y) > TAP_SLOP_PX) {
+      tapStart.current = null; lastTap.current = null; // the finger scrolled
+    }
+  };
+  const onTapUp = (e) => {
+    if (e.pointerType === 'mouse') return;
+    const start = tapStart.current;
+    tapStart.current = null;
+    if (!start) return;
+    const r = nextTap(lastTap.current, { t: e.timeStamp, x: e.clientX, y: e.clientY });
+    lastTap.current = r.last;
+    if (r.double) toggleExpanded();
+  };
+  const onTapCancel = (e) => {
+    if (e.pointerType === 'mouse') return;
+    tapStart.current = null; lastTap.current = null;
   };
   useEffect(() => {
     setSelectedPrNumber(prList[0]?.number ?? null);
@@ -381,7 +426,7 @@ export default function TaskCard({
     task.state === 'error' && 'tc-error', busy && 'tc-live'].filter(Boolean).join(' ');
 
   return (
-    <article id={cid} className={cls} onPointerEnter={armHover} onPointerMove={armHover} onPointerLeave={onCardLeave}>
+    <article id={cid} className={cls} onPointerEnter={armHover} onPointerMove={(e) => { armHover(e); onTapMove(e); }} onPointerLeave={onCardLeave} onPointerCancel={(e) => { onCardLeave(e); onTapCancel(e); }} onPointerDown={onTapDown} onPointerUp={onTapUp}>
       <div className="tc-head">
         <a className="tc-issue" href={task.url} target="_blank" rel="noreferrer" title={t.openIssue}>{highlightNumberRange(String(task.issue), task, parsed) ? <mark className="hit">#{task.issue}</mark> : `#${task.issue}`}</a>
         {movingLive ? (

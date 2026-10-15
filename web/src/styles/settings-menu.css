@@ -178,3 +178,15 @@
   .sm-root .ui-setting-inline { min-height: 44px; }
   .sm-hint { margin-top: 4px; padding-bottom: 4px; }
 }
+
+/* ---- Expand-on-hover choice: five short buttons, 44px targets on touch ---- */
+.sm-hover .ui-seg-btn { padding: 0 8px; }
+/* The long name and five buttons do not fit one line in the 300px column: the control drops under the name. */
+.sm-root .ui-setting-inline:has(.sm-hover) { flex-wrap: wrap; padding-bottom: 4px; }
+.sm-root .ui-setting-inline:has(.sm-hover) .ui-setting-head { flex: 1 1 100%; }
+.sm-root .ui-setting-inline:has(.sm-hover) .ui-setting-name { flex: 1 1 auto; }
+.sm-root .ui-setting-inline:has(.sm-hover) .ui-setting-control { margin-left: auto; }
+@media (max-width: 780px), (pointer: coarse) {
+  .sm-hover { gap: 0; }
+  .sm-hover .ui-seg-btn { min-width: 44px; min-height: 44px; padding: 0 6px; }
+}

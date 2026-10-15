@@ -137,10 +137,10 @@ test('a TaskCard prop is never declared again as a local', () => {
   assert.ok(props.includes('inflightKeys'), 'the in-flight set has its own name');
 });
 
-test('hover: 1000 ms de reposo abre, salir cierra con 150 ms de gracia, el clic ancla', () => {
-  assert.match(card, /const HOVER_OPEN_MS = 1000;/);
+test('hover: el reposo configurado abre, salir cierra con 150 ms de gracia, el clic ancla', () => {
+  assert.doesNotMatch(card, /HOVER_OPEN_MS/);
   assert.match(card, /const HOVER_LEAVE_MS = 150;/);
-  assert.match(card, /onPointerEnter=\{armHover\} onPointerMove=\{armHover\} onPointerLeave=\{onCardLeave\}/);
+  assert.match(card, /onPointerEnter=\{armHover\} onPointerMove=\{\(e\) => \{ armHover\(e\); onTapMove\(e\); \}\} onPointerLeave=\{onCardLeave\}/);
   assert.match(card, /e\.buttons !== 0/);
   assert.match(card, /e\.pointerType !== 'mouse' \|\| suppressHover\.current\) return;/);
   assert.match(card, /const suppressHover = useRef\(false\);/);

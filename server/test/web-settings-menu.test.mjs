@@ -31,7 +31,7 @@ test('Skills de UX is a state button carrying the BRIEF tooltip', () => {
 });
 
 test('the five project switches are menu-context segmented controls over the tri-state helpers', () => {
-  assert.equal((menu.match(/<SegmentedControl/g) ?? []).length, 1); // rendered once, per row of PROJECT_ROWS
+  assert.equal((menu.match(/<SegmentedControl/g) ?? []).length, 2); // once per row of PROJECT_ROWS, once for the hover delay
   assert.match(menu, /<SegmentedControl context="menu" size="sm"/);
   for (const key of ['autoStart', 'approvePlan', 'browserQa', 'fixGaps', 'demo']) {
     assert.match(menu, new RegExp(`projectRow\\('${key}'`));

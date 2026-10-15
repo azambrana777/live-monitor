@@ -5,6 +5,8 @@
 
 .tc {
   position: relative;
+  /* a double tap opens the card: no browser zoom on it */
+  touch-action: manipulation;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
