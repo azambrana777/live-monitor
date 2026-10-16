@@ -1,4 +1,27 @@
 import { authHeaders, withToken } from './token.js';
+import { viewMessage, shouldSend } from './viewReport.js';
+
+// The view this browser last wanted the server to know, and the last one that
+// went out on the current socket (reset on every reconnect, so it is resent).
+let wantedView = null;
+let sentView = null;
+let liveSocket = null;
+
+function flushView() {
+  if (!wantedView || liveSocket?.readyState !== WebSocket.OPEN) return;
+  if (!shouldSend(sentView, wantedView)) return;
+  sentView = wantedView;
+  liveSocket.send(JSON.stringify(wantedView));
+}
+
+/**
+ * Tell the server which project is on screen and whether the tab is visible.
+ * Sends at once when the socket is open; `open` sends it again after a reconnect.
+ */
+export function reportView(project, visible = typeof document === 'undefined' || document.visibilityState === 'visible') {
+  wantedView = viewMessage(project, visible);
+  flushView();
+}
 
 export function connectWs(handlers) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -7,7 +30,9 @@ export function connectWs(handlers) {
 
   const open = () => {
     socket = new WebSocket(withToken(`${proto}://${location.host}/ws`));
-    socket.onopen = () => handlers.onStatus?.(true);
+    liveSocket = socket;
+    sentView = null;
+    socket.onopen = () => { handlers.onStatus?.(true); flushView(); };
     socket.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       handlers[msg.type]?.(msg);
@@ -240,7 +265,8 @@ export const api = {
   setMachine: (project, issue, machine) => send(`${T(project, issue)}/machine`, { machine }),
   machines: () => fetch('/api/machines', { headers: authHeaders() }).then((r) => r.json()),
   models: () => fetch('/api/models', { headers: authHeaders() }).then((r) => r.json()),
-  pollNow: () => send('/api/poll', undefined, 'POST', POLL_TIMEOUT_MS),
+  // Refreshes only the project that is open; with none, the body is empty.
+  pollNow: (project) => send('/api/poll', project ? { project } : undefined, 'POST', POLL_TIMEOUT_MS),
   cancelPoll: () => send('/api/poll/cancel', undefined, 'POST', POLL_TIMEOUT_MS),
   refreshGit: (project) => send('/api/git/refresh', project ? { project } : undefined, 'POST', GIT_TIMEOUT_MS),
   startCr: (project, issue) => send(`${T(project, issue)}/change-requests/start`),

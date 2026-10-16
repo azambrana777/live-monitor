@@ -135,7 +135,7 @@ export async function isProjectWorktree(machine, wtPath) {
  */
 async function commonGitDir(machine, wtPath) {
   if (!wtPath || !(await machine.fs.exists(wtPath))) return null;
-  const r = await machine.exec('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: wtPath });
+  const r = await machine.exec('git', [RO, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: wtPath });
   if (!r.ok) return null;
   return r.stdout.trim();
 }
@@ -341,13 +341,13 @@ export async function ensureDetachedWorktree(machine, base, dirName, { onLine } 
 export async function refreshDetachedWorktree(machine, wtPath, base) {
   const fetch = await machine.exec('git', ['fetch', 'origin', base], { cwd: wtPath });
   await machine.exec('git', ['update-index', '-q', '--refresh'], { cwd: wtPath });
-  const status = await machine.exec('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: wtPath });
+  const status = await machine.exec('git', [RO, 'status', '--porcelain', '--untracked-files=no'], { cwd: wtPath });
   const dirty = !status.ok || status.stdout.trim() !== '';
-  const sym = await machine.exec('git', ['symbolic-ref', '-q', '--short', 'HEAD'], { cwd: wtPath });
+  const sym = await machine.exec('git', [RO, 'symbolic-ref', '-q', '--short', 'HEAD'], { cwd: wtPath });
   const branch = sym.ok && sym.stdout.trim() ? sym.stdout.trim() : null;
 
   const headOf = async () => {
-    const r = await machine.exec('git', ['rev-parse', '--short', 'HEAD'], { cwd: wtPath });
+    const r = await machine.exec('git', [RO, 'rev-parse', '--short', 'HEAD'], { cwd: wtPath });
     return { branch, sha: r.ok ? r.stdout.trim() : null };
   };
 
@@ -355,12 +355,12 @@ export async function refreshDetachedWorktree(machine, wtPath, base) {
   if (branch) return { moved: false, note: `You are on branch ${branch}: nothing was moved.`, head: await headOf() };
   if (dirty) return { moved: false, note: 'There are uncommitted changes: nothing was moved.', head: await headOf() };
 
-  const target = await machine.exec('git', ['rev-parse', '--verify', '--quiet', `origin/${base}^{commit}`], { cwd: wtPath });
+  const target = await machine.exec('git', [RO, 'rev-parse', '--verify', '--quiet', `origin/${base}^{commit}`], { cwd: wtPath });
   if (!target.ok) return { moved: false, note: `Cannot find origin/${base}: nothing was moved.`, head: await headOf() };
-  const cur = await machine.exec('git', ['rev-parse', 'HEAD'], { cwd: wtPath });
+  const cur = await machine.exec('git', [RO, 'rev-parse', 'HEAD'], { cwd: wtPath });
   if (cur.ok && cur.stdout.trim() === target.stdout.trim()) return { moved: false, note: null, head: await headOf() };
 
-  const anc = await machine.exec('git', ['merge-base', '--is-ancestor', 'HEAD', `origin/${base}`], { cwd: wtPath });
+  const anc = await machine.exec('git', [RO, 'merge-base', '--is-ancestor', 'HEAD', `origin/${base}`], { cwd: wtPath });
   if (!anc.ok) {
     return { moved: false, note: `This worktree has commits that are not in origin/${base}: nothing was moved.`, head: await headOf() };
   }
@@ -371,7 +371,7 @@ export async function refreshDetachedWorktree(machine, wtPath, base) {
 
 /** True when the branch has at least one commit beyond origin/<base>. */
 export async function hasCommits(machine, wtPath, { base = DEFAULT_BASE } = {}) {
-  const r = await machine.exec('git', ['rev-list', '--count', `origin/${base}..HEAD`], { cwd: wtPath });
+  const r = await machine.exec('git', [RO, 'rev-list', '--count', `origin/${base}..HEAD`], { cwd: wtPath });
   return r.ok && Number(r.stdout.trim()) > 0;
 }
 
@@ -388,7 +388,7 @@ export async function hasCommits(machine, wtPath, { base = DEFAULT_BASE } = {}) 
  * --reverse` is still the newest commit. The first line of the output is.
  */
 export async function commitSubject(machine, wtPath, { base = DEFAULT_BASE, range = `origin/${base}..HEAD` } = {}) {
-  const r = await machine.exec('git', ['log', '--reverse', '--no-merges', '--format=%s', range], { cwd: wtPath });
+  const r = await machine.exec('git', [RO, 'log', '--reverse', '--no-merges', '--format=%s', range], { cwd: wtPath });
   return r.ok ? (r.stdout.trim().split(/\r?\n/)[0] || null) : null;
 }
 
@@ -411,24 +411,30 @@ export function worktreePathFor(machine, branch) {
 
 /** True when the project checkout on this machine has the branch locally. */
 export async function localBranchExists(machine, branch) {
-  const r = await machine.exec('git', ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: machine.repoPath });
+  const r = await machine.exec('git', [RO, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: machine.repoPath });
   return r.ok;
 }
 
 // ---------------------------------------------------------------------------
 // Bringing origin/<base> into a task's branch.
 
+/**
+ * Global git option for every read-only call: a poll must never take
+ * `index.lock` (status would refresh the index) against a pipeline's add/commit.
+ */
+export const RO = '--no-optional-locks';
+
 const lines = (text) => String(text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
 /** A ref as a sha, so every later step talks about the same commit. */
 export async function resolveRef(machine, wtPath, ref, { base = DEFAULT_BASE } = {}) {
-  const r = await machine.exec('git', ['rev-parse', ref || `origin/${base}`], { cwd: wtPath });
+  const r = await machine.exec('git', [RO, 'rev-parse', ref || `origin/${base}`], { cwd: wtPath });
   return r.ok ? r.stdout.trim() : null;
 }
 
 /** True while a merge is half-done — an index in stages, waiting for someone. */
 export async function mergeInProgress(machine, wtPath) {
-  const r = await machine.exec('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: wtPath });
+  const r = await machine.exec('git', [RO, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: wtPath });
   return r.ok && Boolean(r.stdout.trim());
 }
 
@@ -445,13 +451,13 @@ export async function mergeInProgress(machine, wtPath) {
  * and the paths come quoted unless `core.quotePath` is off.
  */
 export async function analyzeMerge(machine, wtPath, mainSha) {
-  const behindR = await machine.exec('git', ['rev-list', '--count', `HEAD..${mainSha}`], { cwd: wtPath });
+  const behindR = await machine.exec('git', [RO, 'rev-list', '--count', `HEAD..${mainSha}`], { cwd: wtPath });
   const behind = behindR.ok ? Number(behindR.stdout.trim()) : null;
   const head = await resolveRef(machine, wtPath, 'HEAD');
   if (behind === 0) return { mainSha, head, behind, clean: true, conflicts: [], fastForward: false };
 
-  const ff = await machine.exec('git', ['merge-base', '--is-ancestor', 'HEAD', mainSha], { cwd: wtPath });
-  const r = await machine.exec('git', [
+  const ff = await machine.exec('git', [RO, 'merge-base', '--is-ancestor', 'HEAD', mainSha], { cwd: wtPath });
+  const r = await machine.exec('git', [RO, 
     '-c', 'core.quotePath=false',
     'merge-tree', '--write-tree', '--name-only', 'HEAD', mainSha,
   ], { cwd: wtPath, timeoutMs: 2 * 60 * 1000 });
@@ -482,10 +488,10 @@ export async function analyzeMerge(machine, wtPath, mainSha) {
  */
 export async function mergeBlockers(machine, wtPath, mainSha) {
   const [incomingR, modifiedR, stagedR, status] = await Promise.all([
-    machine.exec('git', ['diff', '--name-only', `HEAD...${mainSha}`], { cwd: wtPath }),
-    machine.exec('git', ['-c', 'core.quotePath=false', 'diff', '--name-only'], { cwd: wtPath }),
-    machine.exec('git', ['-c', 'core.quotePath=false', 'diff', '--name-only', '--cached'], { cwd: wtPath }),
-    machine.exec('git', ['-c', 'core.quotePath=false', 'status', '--porcelain'], { cwd: wtPath, timeoutMs: 60_000 }),
+    machine.exec('git', [RO, 'diff', '--name-only', `HEAD...${mainSha}`], { cwd: wtPath }),
+    machine.exec('git', [RO, '-c', 'core.quotePath=false', 'diff', '--name-only'], { cwd: wtPath }),
+    machine.exec('git', [RO, '-c', 'core.quotePath=false', 'diff', '--name-only', '--cached'], { cwd: wtPath }),
+    machine.exec('git', [RO, '-c', 'core.quotePath=false', 'status', '--porcelain'], { cwd: wtPath, timeoutMs: 60_000 }),
   ]);
 
   const incoming = new Set(lines(incomingR.stdout));
@@ -580,12 +586,12 @@ export async function pendingWork(machine, wtPath, branch, { base = DEFAULT_BASE
     // Unquoted paths, here and in the diff: `café.txt` would otherwise come out
     // as `"caf\303\251.txt"`, match nothing the branch touched, and fail a
     // `git add` if it ever got that far.
-    machine.exec('git', ['-c', 'core.quotePath=false', 'status', '--porcelain'], { cwd: wtPath }),
+    machine.exec('git', [RO, '-c', 'core.quotePath=false', 'status', '--porcelain'], { cwd: wtPath }),
     // `--not origin/<base>` so the count keeps meaning "your work": after bringing
     // main in, the plain count would include every commit main contributed.
-    machine.exec('git', ['rev-list', '--count', `origin/${branch}..HEAD`, '--not', `origin/${base}`], { cwd: wtPath, timeoutMs: 60_000 }),
-    machine.exec('git', ['-c', 'core.quotePath=false', 'diff', '--name-only', `origin/${base}...HEAD`], { cwd: wtPath, timeoutMs: 60_000 }),
-    machine.exec('git', ['rev-list', '--count', `HEAD..origin/${base}`], { cwd: wtPath, timeoutMs: 60_000 }),
+    machine.exec('git', [RO, 'rev-list', '--count', `origin/${branch}..HEAD`, '--not', `origin/${base}`], { cwd: wtPath, timeoutMs: 60_000 }),
+    machine.exec('git', [RO, '-c', 'core.quotePath=false', 'diff', '--name-only', `origin/${base}...HEAD`], { cwd: wtPath, timeoutMs: 60_000 }),
+    machine.exec('git', [RO, 'rev-list', '--count', `HEAD..origin/${base}`], { cwd: wtPath, timeoutMs: 60_000 }),
   ]);
 
   const lines = status.ok ? status.stdout.split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean) : [];
@@ -756,7 +762,7 @@ export async function fastForwardTo(machine, wtPath, branch, { discardLocal = fa
   // Both commands act on whatever is checked out: make sure it is the branch.
   // The full ref, because `--short` turns into `heads/<b>` when a tag of the
   // same name exists.
-  const head = await machine.exec('git', ['symbolic-ref', '--quiet', 'HEAD'], { cwd: wtPath });
+  const head = await machine.exec('git', [RO, 'symbolic-ref', '--quiet', 'HEAD'], { cwd: wtPath });
   if (!head.ok || head.stdout.trim() !== `refs/heads/${branch}`) {
     throw new Error(`worktree ${wtPath} is not on ${branch} (it is on ${head.stdout.trim() || 'a detached HEAD'})`);
   }
@@ -840,7 +846,7 @@ export async function wipCommit(machine, wtPath, paths, { message = WIP_COMMIT_M
 export async function foreignWorktreeFor(machine, branch) {
   const repo = machine.repoPath;
   await machine.exec('git', ['worktree', 'prune'], { cwd: repo });
-  const r = await machine.exec('git', ['worktree', 'list', '--porcelain'], { cwd: repo });
+  const r = await machine.exec('git', [RO, 'worktree', 'list', '--porcelain'], { cwd: repo });
   if (!r.ok) throw new Error(`git worktree list failed: ${lastLine(r)}`);
 
   const own = worktreePathFor(machine, branch);
@@ -928,7 +934,7 @@ export async function deleteLocalBranch(machine, branch, { base = DEFAULT_BASE }
     // La guarda, antes de tocar nada: commits que tiene la rama y no tiene
     // `origin/<base>`. No necesita worktree, así que vale también cuando el
     // worktree ya se borró, que es justo el caso del cierre sin PR.
-    const ahead = await machine.exec('git', [
+    const ahead = await machine.exec('git', [RO, 
       'rev-list', '--count', `origin/${base}..${branch}`,
     ], { cwd: repo });
     // The empty string is the trap: `Number('')` is 0, not NaN, so a call that
