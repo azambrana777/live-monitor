@@ -202,8 +202,10 @@ test('la misma issue #12 en dos proyectos son dos tareas, y cada ruta llega a la
   const beta = await call('GET', '/api/projects/app-b/tasks/12/log');
   assert.equal(hfs.status, 200);
   assert.equal(beta.status, 200);
-  assert.match(hfs.body.log.at(-1).line, /hfs doce/);
-  assert.match(beta.body.log.at(-1).line, /abeja doce/, 'antes el número suelto daba la tarea de hfs');
+  // The startup poll may append its own warning lines: look for the seeded entry, not the last one.
+  assert.ok(hfs.body.log.some((e) => /hfs doce/.test(e.line)));
+  assert.ok(beta.body.log.some((e) => /abeja doce/.test(e.line)), 'antes el número suelto daba la tarea de hfs');
+  assert.ok(!beta.body.log.some((e) => /hfs doce/.test(e.line)));
 });
 
 test('un número que sólo existe en un proyecto no aparece en el otro', async () => {

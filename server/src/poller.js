@@ -4,6 +4,7 @@ import { settings } from './settings.js';
 import { store } from './store.js';
 import { listAssignedIssues, listClosedAssignedIssues, getIssue, issueStates, assigneeOf } from './github.js';
 import { listProjects } from './projects.js';
+import { viewedProjects, viewerEvents } from './viewers.js';
 import { makeKey, keyOf } from './keys.js';
 import { listAllBranches } from './worktree.js';
 import {
@@ -263,16 +264,19 @@ let startedPhases = new Set();
 const WATCHDOG_MS = 10 * 60_000;
 /** Inside a loop the 'poll' event goes out at most this often (a trailing emit keeps the final count). */
 const EMIT_THROTTLE_MS = 1_000;
-const hooks = { watchdogMs: WATCHDOG_MS, runCycle: null, steps: {}, throttleMs: EMIT_THROTTLE_MS };
+const hooks = { watchdogMs: WATCHDOG_MS, runCycle: null, steps: {}, throttleMs: EMIT_THROTTLE_MS, projects: null };
 
 /**
  * Test seam: inject the watchdog timeout, the cycle body, replacements for the
  * pieces of a cycle (`steps`: pollProject, sweepClosedIssues, listAllBranches,
  * refreshClassification, refreshBranchStatus, refreshStackHealth, refreshChecks,
- * checkChangeRequests, tick, evaluateQuota, listTasks) and the emit throttle.
+ * checkChangeRequests, tick, evaluateQuota, listTasks), the emit throttle and
+ * `projects` (a function replacing listProjects).
  * Call with no argument to reset.
  */
-export function setPollTestHooks({ watchdogMs, runCycle, steps, throttleMs } = {}) {
+export function setPollTestHooks({ watchdogMs, runCycle, steps, throttleMs, projects } = {}) {
+  hooks.projects = projects ?? null;
+  pending.clear();
   hooks.watchdogMs = watchdogMs ?? WATCHDOG_MS;
   hooks.runCycle = runCycle ?? null;
   hooks.steps = steps ?? {};
@@ -301,7 +305,14 @@ const DUE_SLACK_MS = 1_000;
     from the real thing instead of from the page's last reload. */
 export const pollEvents = new EventEmitter();
 
+/** The levels of the running cycle: which projects get the full chain and which the light one. */
+let scope = { full: [], light: [] };
+/** Requests that arrived while a cycle ran: project id -> 'full' | 'light' (full wins). Run as one follow-up cycle. */
+const pending = new Map();
+const knownProjects = () => (hooks.projects ?? listProjects)();
+
 export const pollStatus = () => ({
+  scope: inFlight ? { full: [...scope.full], light: [...scope.light] } : { full: [], light: [] },
   lastPollAt,
   running: Boolean(inFlight),
   startedAt: inFlight ? startedAt : null,
@@ -403,11 +414,13 @@ function release(token, result) {
     error: result?.error ?? null,
     finishedAt: new Date().toISOString(),
   };
+  scope = { full: [], light: [] };
   emitNow();
+  if (pending.size) queueMicrotask(drainPending);
 }
 
 /**
- * Runs one full cycle. The Fetch button calls this very function, so what a
+ * Runs one cycle. The Fetch button calls this very function, so what a
  * click does is exactly what the timer does — one code path, nothing to drift.
  * A second call while one is running joins it instead of starting another:
  * two concurrent `gh issue list` add nothing but load.
@@ -428,12 +441,53 @@ export function pollNow(options) {
  *
  * @param {Object} [options] same as {@link pollNow}
  */
-export function startPoll({ scheduled = false } = {}) {
-  if (inFlight) return { started: false, promise: inFlight };
-  const all = listProjects();
+export function startPoll({ scheduled = false, project = null } = {}) {
+  const plan = planFor({ scheduled, project });
+  if (inFlight) {
+    queueRequest(plan);
+    return { started: false, promise: inFlight };
+  }
+  return { started: true, promise: launch(plan) };
+}
+
+/**
+ * Which projects a request covers and at which level. An explicit `project`
+ * means that one, full, alone. Otherwise: the viewed projects get the full
+ * chain and every other the light one; `scheduled` keeps only the due ones.
+ * With nobody viewing, everything is light.
+ */
+function planFor({ scheduled, project }) {
+  const all = knownProjects();
+  if (project) return new Map(all.filter((p) => p.id === project).map((p) => [p.id, 'full']));
   const now = Date.now();
+  const viewed = viewedProjects();
   const due = scheduled ? all.filter((p) => isDue(p, now)) : all;
+  return new Map(due.map((p) => [p.id, viewed.has(p.id) ? 'full' : 'light']));
+}
+
+/** Adds a plan to the follow-up set, skipping what the running cycle already does at that level or better. */
+function queueRequest(plan) {
+  for (const [id, level] of plan) {
+    if (scope.full.includes(id) || (level === 'light' && scope.light.includes(id))) continue;
+    if (pending.get(id) !== 'full') pending.set(id, level);
+  }
+}
+
+function drainPending() {
+  if (inFlight || !pending.size) return;
+  const plan = new Map(pending);
+  pending.clear();
+  launch(plan).catch(() => {});
+}
+
+function launch(plan) {
+  const due = knownProjects().filter((p) => plan.has(p.id));
+  const now = Date.now();
   for (const project of due) lastPolledAt.set(project.id, now);
+  scope = {
+    full: due.filter((p) => plan.get(p.id) === 'full').map((p) => p.id),
+    light: due.filter((p) => plan.get(p.id) === 'light').map((p) => p.id),
+  };
   // One token per cycle: cancelling or abandoning this one can never reach the next.
   const token = { cancelled: false };
   const timeout = new Promise((resolve) => {
@@ -452,7 +506,8 @@ export function startPoll({ scheduled = false } = {}) {
   startedAt = Date.now();
   progress = idleProgress();
   startedPhases = new Set();
-  const body = Promise.resolve().then(() => (hooks.runCycle ?? runCycle)(due, token));
+  const levels = new Map(due.map((p) => [p.id, plan.get(p.id)]));
+  const body = Promise.resolve().then(() => (hooks.runCycle ?? runCycle)(due, token, levels));
   const promise = Promise.race([body, timeout])
     .then((result) => { clearTimeout(token.timer); release(token, result); return result; },
       (e) => { clearTimeout(token.timer); release(token, { error: e?.message ?? String(e) }); throw e; });
@@ -461,7 +516,21 @@ export function startPoll({ scheduled = false } = {}) {
   // not just the tab whose button started it. The end is announced by
   // `release`, after the flag is cleared.
   emitNow();
-  return { started: true, promise };
+  return promise;
+}
+
+/**
+ * A project just became viewed: its full cycle starts now (or right after the
+ * running one). Returns the stop function.
+ */
+export function watchViewers() {
+  const onViewed = ({ project, added }) => {
+    if (!added) return;
+    const { promise } = startPoll({ project });
+    promise.catch(() => {});
+  };
+  viewerEvents.on('viewed', onViewed);
+  return () => viewerEvents.off('viewed', onViewed);
 }
 
 /**
@@ -469,6 +538,7 @@ export function startPoll({ scheduled = false } = {}) {
  * in flight finish, and the cycle then ends. A no-op when nothing runs.
  */
 export function cancelPoll() {
+  pending.clear();
   if (inFlight && current && !current.cancelled) {
     current.cancelled = true;
     emitNow();
@@ -544,7 +614,7 @@ const FETCH_CONCURRENCY = 3;
  *                 classify + branches -> applyChecks (needs prNumber and unpushed)
  *   board         tick() once every project is classified, and again at the very end
  */
-export async function runCycle(due, token = {}) {
+export async function runCycle(due, token = {}, levels = null) {
   const S = { ...realSteps(), ...hooks.steps };
   const found = { tasks: 0, changeRequests: 0, swept: 0 };
   const errors = [];
@@ -569,7 +639,36 @@ export async function runCycle(due, token = {}) {
     return true;
   });
 
-  const chainOf = (project, onClassified) => async () => {
+  /** The light chain: the listing, then classification of the tasks never classified. Nothing else. */
+  const lightChainOf = (project, onClassified) => async () => {
+    const id = project.id;
+    progressAdd(token, 'listing');
+    if (cancelled()) return;
+    try {
+      await S.pollProject(project, found, new Set());
+    } catch (e) {
+      console.error(`[poll] ${id}: ${e.message}`);
+      errors.push(`${id}: ${e.message}`);
+    }
+    progressBump(token, 'listing', id);
+    if (cancelled()) return;
+    const tasks = S.listTasks(new Set([id]))
+      .filter((t) => t.project === id && !t.classified && t.state !== 'done' && !t.unassigned);
+    progressAdd(token, 'classify', tasks.length);
+    const lightSem = new Semaphore(() => TASK_CONCURRENCY);
+    await Promise.all(tasks.map((task) => lightSem.run(async () => {
+      const ran = await runStep(() => S.refreshClassification(task),
+        (e) => store.addLog(task, 'guard', `⚠️ could not reclassify: ${e.message}`));
+      if (ran) progressBump(token, 'classify', id);
+    })));
+    onClassified();
+  };
+
+  const chainOf = (project, onClassified) => (levels?.get(project.id) === 'light'
+    ? lightChainOf(project, onClassified)
+    : fullChainOf(project, onClassified));
+
+  const fullChainOf = (project, onClassified) => async () => {
     const id = project.id;
     const seen = new Set();
 
@@ -755,11 +854,14 @@ export function shortestGitRefreshSeconds(seconds) {
 let gitRefreshing = false;
 
 /** One timer tick: never overlaps a previous run, never throws. */
-export async function gitRefreshTick(refresh = refreshGitNow) {
+export async function gitRefreshTick(refresh = refreshGitNow, viewed = viewedProjects) {
   if (gitRefreshing) return false;
+  // Only what somebody is looking at: nobody viewing, nothing to refresh.
+  const projects = [...viewed()];
+  if (!projects.length) return false;
   gitRefreshing = true;
   try {
-    await refresh({ force: true });
+    await refresh({ projects, force: true });
   } catch (e) {
     console.warn(`git refresh failed: ${e?.message ?? e}`);
   } finally {
@@ -804,6 +906,7 @@ export function startPolling() {
     console.log(`refrescando el estado de git cada ${seconds} s`);
   };
 
+  watchViewers();
   pollNow();
   arm();
   armGit();

@@ -15,7 +15,7 @@ const menu = read('web/src/components/topbar/SettingsMenu.jsx');
 
 test('api: refreshGit posts to /api/git/refresh and both calls have a client timeout', () => {
   assert.match(api, /refreshGit: \(project\) => send\('\/api\/git\/refresh'/);
-  assert.match(api, /pollNow: \(\) => send\('\/api\/poll', undefined, 'POST', POLL_TIMEOUT_MS\)/);
+  assert.match(api, /pollNow: \(project\) => send\('\/api\/poll', project \? \{ project \} : undefined, 'POST', POLL_TIMEOUT_MS\)/);
   assert.match(api, /cancelPoll: \(\) => send\('\/api\/poll\/cancel'/);
   assert.match(api, /AbortController/);
   assert.match(api, /POLL_TIMEOUT_MS = 15 \* 1000/);

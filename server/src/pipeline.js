@@ -456,7 +456,9 @@ const quietChecks = new Map();   // task key -> ms of the last classification
 // `!some(isOpenPr)` on a task completed by a closed issue that still holds an
 // open or draft PR (see `completeOnIssueClosed`), and `length > 0` on an issue
 // closed with no PR at all. Classified once, asked again hourly.
-const isQuiet = (task) => task.state === 'done' && task.issueClosed && Boolean(task.classified);
+// A completed card whose issue is still open (work merged and the issue left
+// open) is quiet too: it is asked about at most once an hour, not every poll.
+const isQuiet = (task) => task.state === 'done' && Boolean(task.classified);
 
 /**
  * When this task was last classified: the persisted `classifiedAt` (survives a
@@ -607,6 +609,23 @@ export async function settleUnassigned(task) {
     store.addLog(task, 'guard', `⚠️ could not settle the reassigned task: ${reasonOf(e)}`);
     return 'skip';
   }
+}
+
+/**
+ * Whether the classifier has never looked at this task: the only kind of task
+ * the light poll spends `gh` on. Anything already classified is left to the
+ * full poll (no quiet re-check, no hourly re-ask here).
+ */
+export function needsClassification(task) {
+  return Boolean(task)
+    && !task.classified && task.state !== 'done'
+    && !task.unassigned && !task.issueClosed && !task.moving;
+}
+
+/** `refreshClassification` for a task that is new to the classifier; a no-op otherwise. */
+export async function classifyNewTask(task, steps = CLASSIFY_STEPS) {
+  if (!needsClassification(task)) return;
+  await refreshClassification(task, steps);
 }
 
 /**
@@ -2137,8 +2156,12 @@ const gitRefreshing = new Map();   // project -> in-flight promise
  *
  * @returns {Promise<{tasks: number, fetched: number}>}
  */
-export function refreshGitNow({ project = null, force = true } = {}) {
-  const key = project ?? '*';
+export function refreshGitNow({ project = null, projects = null, force = true } = {}) {
+  // `projects` wins over `project`; an empty list is "nothing to refresh", not
+  // "everything" (the caller's visible set may legitimately be empty).
+  const only = Array.isArray(projects) ? new Set(projects) : null;
+  if (only && only.size === 0) return Promise.resolve({ tasks: 0, fetched: 0 });
+  const key = only ? [...only].sort().join(' ') : (project ?? '*');
   // The all-projects sweep and a single project's one are different jobs.
   const running = gitRefreshing.get(key);
   if (running) return running;
@@ -2149,7 +2172,8 @@ export function refreshGitNow({ project = null, force = true } = {}) {
       for (const task of refreshGitDeps.tasks()) {
         if (!task.branch || !task.worktreePath || task.unassigned || task.state === 'done' || task.moving) continue;
         const pid = task.project;
-        if (!pid || (project && pid !== project)) continue;
+        if (!pid) continue;
+        if (only ? !only.has(pid) : (project && pid !== project)) continue;
         if (!byProject.has(pid)) byProject.set(pid, []);
         byProject.get(pid).push(task);
       }

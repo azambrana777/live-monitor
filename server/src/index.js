@@ -7,6 +7,7 @@ import { config, configEvents, ROOT } from './config.js';
 import { store } from './store.js';
 import { settings } from './settings.js';
 import { startPolling, startPoll, cancelPoll, pollStatus, pollEvents } from './poller.js';
+import { viewedProjects, handleViewMessage, drop as dropViewer } from './viewers.js';
 import {
   tick, retry, markReady, sendChat, deleteWorktree, activeCount, generateDemoSteps,
   forceStart, detectExistingWork, ensureWorktree, interruptChat, setChatModel, chatEffectiveEffort, setMode,
@@ -1065,9 +1066,15 @@ app.post('/api/projects/:project/tasks/:issue/mode', withTask((task, req, res) =
  * a cold cycle takes minutes, so the request must not hold. Progress and the
  * result travel through the 'poll' event and `poll.last`.
  */
-app.post('/api/poll', (_req, res) => {
+app.post('/api/poll', (req, res) => {
   try {
-    const { started, promise } = startPoll();
+    // `{ project }`: the full cycle for that project alone (the open project's button).
+    // No body: the scheduled-style cycle, viewed projects full and the rest light.
+    const project = req.body?.project ?? null;
+    if (project !== null && (typeof project !== 'string' || !listProjects().some((p) => p.id === project))) {
+      return res.status(400).json({ error: `unknown project: ${JSON.stringify(project)}` });
+    }
+    const { started, promise } = startPoll(project ? { project } : { scheduled: true });
     // Nobody awaits the cycle here; its failure is already in `poll.last`.
     promise.catch(() => {});
     res.status(202).json({ ok: true, started, poll: pollStatus() });
@@ -1088,6 +1095,12 @@ app.post('/api/git/refresh', async (req, res) => {
     return res.status(400).json({ error: `unknown project: ${JSON.stringify(project)}` });
   }
   try {
+    // An explicit project is honoured; the bare call only touches what somebody is viewing.
+    if (project === null) {
+      const projects = [...viewedProjects()];
+      if (!projects.length) return res.json({ ok: true, tasks: 0, fetched: 0 });
+      return res.json({ ok: true, ...(await refreshGitNow({ projects, force: true })) });
+    }
     res.json({ ok: true, ...(await refreshGitNow({ project, force: true })) });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1666,9 +1679,13 @@ wss.on('connection', (socket, request) => {
     return;
   }
   socket.send(JSON.stringify({ type: 'snapshot', ...snapshot() }));
+  socket.on('close', () => dropViewer(socket));
+  socket.on('error', () => dropViewer(socket));
   socket.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
+      // What this browser shows: only the visible projects get the full poll.
+      if (handleViewMessage(socket, msg)) return;
       // A project chat: no issue, so the owner is the holder of project × machine.
       if (msg.type === 'chat' && msg.owner === 'project' && typeof msg.machine === 'string') {
         if (typeof msg.text !== 'string' || !msg.text.trim()) return;

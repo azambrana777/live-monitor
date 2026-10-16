@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { connectWs, api } from './api.js';
+import { connectWs, api, reportView } from './api.js';
 import Board from './components/Board.jsx';
 import NoProjectState from './components/NoProjectState.jsx';
 import ImportProjectDialog from './components/ImportProjectDialog.jsx';
@@ -390,6 +390,23 @@ export default function App() {
   );
 
   useEffect(() => { rememberActiveProject(activeProject); }, [activeProject]);
+
+  // What is open here, for the server: the project on screen (null: none) and
+  // whether the tab is visible. A project change, a hidden tab and a page that
+  // is going away all say so; the socket resends it after every reconnect.
+  useEffect(() => {
+    reportView(activeProject);
+    const onVisibility = () => reportView(activeProject, document.visibilityState === 'visible');
+    const onHide = () => reportView(activeProject, false);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onHide);
+    window.addEventListener('pageshow', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onHide);
+      window.removeEventListener('pageshow', onVisibility);
+    };
+  }, [activeProject]);
 
   /** What to call a project on screen; a registry the server has not sent yet leaves the id. */
   const projectName = (id) => projects.find((p) => p.id === id)?.name || id;
@@ -830,7 +847,7 @@ export default function App() {
   // progress and its end arrive as `poll` messages.
   const runPoll = () => {
     setPollStarting(true);
-    api.pollNow()
+    api.pollNow(activeProject)
       .then((r) => { if (r.poll) setPollInfo(r.poll); })
       .catch((e) => setFetchMsg({ error: e.timeout ? t.topbar.bar.timeout : e.message }))
       .finally(() => setPollStarting(false));

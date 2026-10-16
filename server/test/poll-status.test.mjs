@@ -45,11 +45,12 @@ test('shortestGitRefreshSeconds ignores 0 and non-numbers; null when nothing is 
 });
 
 test('gitRefreshTick skips while a refresh runs and swallows errors', async () => {
+  const viewed = () => new Set(['p']);
   let release;
   const slow = () => new Promise((r) => { release = r; });
-  const first = poller.gitRefreshTick(slow);
-  assert.equal(await poller.gitRefreshTick(async () => { throw new Error('no'); }), false);
+  const first = poller.gitRefreshTick(slow, viewed);
+  assert.equal(await poller.gitRefreshTick(async () => { throw new Error('no'); }, viewed), false);
   release();
   assert.equal(await first, true);
-  assert.equal(await poller.gitRefreshTick(async () => { throw new Error('boom'); }), true);
+  assert.equal(await poller.gitRefreshTick(async () => { throw new Error('boom'); }, viewed), true);
 });
