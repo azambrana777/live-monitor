@@ -30,6 +30,7 @@ export function createRunner({
   attachmentsDir = path.join(homedir(), '.hfs-monitor', 'attachments'),
   monitorDir = defaultMonitorDir(),
   heartbeatMs = 30_000,
+  infoBoundMs = 2_000,
 }) {
   if (!token) throw new Error('runner: falta el token');
   const machine = new LocalMachine('runner', { repoPath, worktreeRoot });
@@ -39,7 +40,15 @@ export function createRunner({
   // `diskCommit` is read on every `/info`, so a pull that has not been
   // followed by a restart shows up as the two disagreeing.
   const checkoutDir = monitorDir ? path.resolve(monitorDir) : null;
+  // `/info` must answer even when git is slow (the board decides the runner
+  // came back from this answer), so each read has its own bound and falls back
+  // to the last value seen; `degraded` says something was cut short.
   const startCommit = headOf(machine, checkoutDir);
+  const last = { commit: null, diskCommit: null, base: null };
+  const bounded = (p, ms) => new Promise((resolve) => {
+    const t = setTimeout(() => resolve(BOUND), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, () => { clearTimeout(t); resolve(BOUND); });
+  });
 
   const app = express();
 
@@ -52,15 +61,25 @@ export function createRunner({
   app.use(express.raw({ type: 'application/octet-stream', limit: '25mb' }));
 
   app.get('/info', async (_req, res) => {
+    const [base, commit, diskCommit] = await Promise.all([
+      bounded(machine.info(), infoBoundMs),
+      bounded(startCommit, infoBoundMs),
+      bounded(headOf(machine, checkoutDir), infoBoundMs),
+    ]);
+    const degraded = base === BOUND || commit === BOUND || diskCommit === BOUND;
+    if (base !== BOUND) last.base = base;
+    if (commit !== BOUND) last.commit = commit;
+    if (diskCommit !== BOUND) last.diskCommit = diskCommit;
     res.json({
-      ...(await machine.info()),
+      ...(last.base ?? { platform: process.platform, node: process.version, claude: null, home: homedir() }),
       repoPath, worktreeRoot, home: homedir(), pid: process.pid,
       // Who this runner runs as: the file viewer serves a `/tmp/claude-*` file
       // only when it belongs to this user, not to anyone else on the box.
       uid: process.getuid?.() ?? null,
-      commit: await startCommit,
-      diskCommit: await headOf(machine, checkoutDir),
+      commit: last.commit,
+      diskCommit: last.diskCommit,
       monitorDir: checkoutDir,
+      degraded,
     });
   });
 
@@ -190,9 +209,19 @@ export function createRunner({
       server.once('error', reject);
       server.listen(port, bind, () => resolve(server.address()));
     }),
-    close: () => new Promise((resolve) => { wss.close(); server.close(() => resolve()); }),
+    // Ends open sockets too: server.close() alone waits for every connection,
+    // and a stuck stop would sit there until systemd gives up.
+    close: () => new Promise((resolve) => {
+      for (const ws of wss.clients) { try { ws.terminate(); } catch { /* gone */ } }
+      wss.close();
+      server.close(() => resolve());
+      if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+      if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    }),
   };
 }
+
+const BOUND = Symbol('bound');
 
 /**
  * The checkout root: this file is `<root>/server/src/runner/app.js`.
