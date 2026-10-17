@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { createRunner } from './src/runner/app.js';
+import { setProcessCaps } from './src/exec.js';
 
 /**
  * Entry point on the dev box: `node runner.js`, from
@@ -21,11 +22,21 @@ if (!cfg.bind || cfg.bind === '0.0.0.0' || cfg.bind === '::') {
   process.exit(2);
 }
 
+// The 8/4/8 process budgets belong to the board. Here they would queue /info
+// (and every other request) behind slow git calls; the board already limits
+// what it sends.
+setProcessCaps({ gh: Infinity, ghPerRepo: Infinity, git: Infinity });
+
 const runner = createRunner(cfg);
 const addr = await runner.listen(cfg.port ?? 7421, cfg.bind);
 const info = await runner.machine.info();
 console.log(`hfs-monitor runner escuchando en http://${addr.address}:${addr.port} · claude ${info.claude ?? '(no encontrado)'} · node ${info.node}`);
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.once(signal, async () => { await runner.close(); process.exit(0); });
+  process.once(signal, async () => {
+    // A stuck stop must not outlive the upgrade's 60 s window (systemd would wait 90 s).
+    setTimeout(() => process.exit(1), 10_000).unref();
+    await runner.close();
+    process.exit(0);
+  });
 }

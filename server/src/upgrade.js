@@ -969,18 +969,98 @@ async function runnerInfo(m) {
   return withTimeout(m.info(), upgradeHooks.timing.infoTimeoutMs, m.name);
 }
 
-/** Polls `/info` until `test` holds, or gives up. Errors are the restart itself. */
-async function waitForRunner(m, test, timeoutMs) {
+/**
+ * Polls `/info` until `test` holds, or gives up. Errors are the restart itself,
+ * but not silent: `seen` (when given) keeps the last answer, the last error and
+ * how many polls failed, so a timeout can say what the board saw.
+ */
+export async function waitForRunner(m, test, timeoutMs, seen = {}) {
   const deadline = Date.now() + timeoutMs;
-  let last = null;
+  seen.polls = 0;
+  seen.failed = 0;
   while (Date.now() < deadline) {
     await sleep(upgradeHooks.timing.restartPollMs);
+    seen.polls += 1;
     try {
-      last = await runnerInfo(m);
-      if (test(last)) return last;
-    } catch { /* down while it restarts */ }
+      const got = await runnerInfo(m);
+      seen.info = got;
+      seen.error = null;
+      if (test(got)) return got;
+    } catch (e) {
+      seen.failed += 1;
+      seen.error = e?.message ?? String(e);
+    }
   }
   return null;
+}
+
+/** What the board saw last, in one line, plus a diagnosis. */
+export function describeLastSeen(seen, { sha, pidBefore }, lang = 'en') {
+  const es = lang === 'es';
+  const info = seen?.info;
+  const parts = (i) => {
+    const unchanged = Number.isInteger(pidBefore) && i.pid === pidBefore;
+    const pid = Number.isInteger(i.pid)
+      ? `pid ${i.pid}${unchanged ? (es ? ' (sin cambio)' : ' (unchanged)') : Number.isInteger(pidBefore) ? (es ? ` (antes ${pidBefore})` : ` (was ${pidBefore})`) : ''}`
+      : 'pid ?';
+    return [pid, `commit ${i.commit ? short(i.commit) : '?'}`, `diskCommit ${i.diskCommit ? short(i.diskCommit) : '?'}`,
+      ...(i.monitorDir ? [`dir ${i.monitorDir}`] : [])].join(', ');
+  };
+  let line;
+  let diagnosis;
+  if (seen?.error || !info) {
+    const why = seen?.error ?? (es ? 'sin respuesta' : 'no data');
+    line = es
+      ? `visto por última vez: sin respuesta (${why}), ${seen?.failed ?? 0} sondeo(s) fallido(s)${info ? `; antes: ${parts(info)}` : ''}`
+      : `last seen: no answer (${why}), ${seen?.failed ?? 0} failed poll(s)${info ? `; before that: ${parts(info)}` : ''}`;
+    diagnosis = es ? 'el runner no responde' : 'the runner is not answering';
+  } else {
+    line = `${es ? 'visto por última vez' : 'last seen'}: ${parts(info)}`;
+    const pidKnown = Number.isInteger(pidBefore) && Number.isInteger(info.pid);
+    if (pidKnown && info.pid === pidBefore) {
+      diagnosis = es
+        ? 'el reinicio no sustituyó al proceso que escucha en este puerto; comprueba que la unidad hfsmon-runner es la que lo ejecuta'
+        : 'the restart did not replace the process that listens on this port; check that the hfsmon-runner unit is the one running it';
+    } else if (info.commit !== sha || info.diskCommit !== sha) {
+      diagnosis = es ? 'el runner se reinició desde otro checkout o commit' : 'the runner restarted from another checkout/commit';
+    } else {
+      diagnosis = null;
+    }
+  }
+  return diagnosis ? `${line}. ${es ? 'Diagnóstico' : 'Diagnosis'}: ${diagnosis}` : line;
+}
+
+/**
+ * Reads the runner's systemd unit and compares its MainPID with the pid that
+ * serves `/info`. `fail` means a restart would not replace the live process;
+ * any trouble running the probe is a `warn`, never a block.
+ */
+export async function checkUnitPid(sh, info, { restartNeeded = true } = {}) {
+  let out;
+  try {
+    out = await sh(`${SYSTEMD_ENV}; systemctl --user show hfsmon-runner -p LoadState -p MainPID -p ActiveState`, { timeoutMs: 15_000 });
+  } catch (e) {
+    return { level: 'warn', message: `could not read the hfsmon-runner unit (${e.message})` };
+  }
+  if (!out?.ok) return { level: 'warn', message: `could not read the hfsmon-runner unit (${lastLines(out?.stderr) || `code ${out?.code}`})` };
+  const props = {};
+  for (const line of String(out.stdout).split(/\r?\n/)) {
+    const eq = line.indexOf('=');
+    if (eq > 0) props[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+  }
+  if (props.LoadState === 'not-found') return { level: 'ok', message: null };
+  if (!props.ActiveState || !/^\d+$/.test(props.MainPID ?? '')) {
+    return { level: 'warn', message: 'the hfsmon-runner unit answered something unexpected' };
+  }
+  const mainPid = Number(props.MainPID);
+  const servedPid = Number.isInteger(info?.pid) ? info.pid : null;
+  const active = props.ActiveState === 'active';
+  if (active && (servedPid === null || mainPid === servedPid)) return { level: 'ok', message: null };
+  const fix = `to fix it, the owner runs on the runner: kill ${servedPid ?? '<pid>'} (the process serving the port), then systemctl --user restart hfsmon-runner`;
+  const message = active
+    ? `the hfsmon-runner unit runs pid ${mainPid}, but the process answering /info is pid ${servedPid}: restarting the unit will not replace it; ${fix}`
+    : `the hfsmon-runner unit is ${props.ActiveState} (MainPID ${mainPid}) while pid ${servedPid ?? '?'} answers /info: restarting the unit will not replace it; ${fix}`;
+  return { level: restartNeeded ? 'fail' : 'warn', message };
 }
 
 /**
@@ -1128,8 +1208,15 @@ async function upgradeRunner(j, m) {
     if ((ctx.codeBehind || ctx.staleProcess) && !ctx.bus) {
       throw new Error('without a systemd user bus the runner cannot be restarted');
     }
+    let unitWarn = null;
+    if (ctx.bus) {
+      const unit = await checkUnitPid(sh, info, { restartNeeded: ctx.codeBehind || ctx.staleProcess });
+      if (unit.level === 'fail') throw new Error(unit.message);
+      if (unit.level === 'warn') unitWarn = unit.message;
+    }
     const summary = `${m.name}: ${dir} · ${short(head)} · origin/main ${short(target)} · ${ctx.codeBehind ? 'código atrasado' : 'código al día'}`;
-    if (lingerOff) stepEnd(j, step, 'warn', `${summary} · linger desactivado: el runner no sobrevive a un logout`);
+    const warns = [lingerOff && 'linger desactivado: el runner no sobrevive a un logout', unitWarn].filter(Boolean);
+    if (warns.length) stepEnd(j, step, 'warn', `${summary} · ${warns.join(' · ')}`);
     else stepEnd(j, step, 'ok', summary);
   });
 
@@ -1199,8 +1286,13 @@ async function upgradeRunner(j, m) {
       const r = await sh(systemdRun(`hfsmon-upgrade-${j.id}-restart`, '--on-active=2s systemctl --user restart hfsmon-runner'), { timeoutMs: 30_000 });
       if (!r.ok) throw new Error(`could not schedule the restart: ${lastLines(r.stderr) || `code ${r.code}`}`);
       const { restartTimeoutMs } = upgradeHooks.timing;
-      const back = await waitForRunner(m, restartedOn(expected, pidBefore), restartTimeoutMs);
-      if (!back) throw new Error(`the runner did not come back with ${short(expected)} in ${Math.round(restartTimeoutMs / 1000)} s`);
+      const seen = {};
+      const back = await waitForRunner(m, restartedOn(expected, pidBefore), restartTimeoutMs, seen);
+      if (!back) {
+        const detail = describeLastSeen(seen, { sha: expected, pidBefore });
+        logLine(j, `${m.name}: ${detail}`);
+        throw new Error(`the runner did not come back with ${short(expected)} in ${Math.round(restartTimeoutMs / 1000)} s; ${detail}`);
+      }
       if (back.commit === undefined) {
         // A runner that does not report its commit: the pid changed, and the
         // disk is asked directly.
@@ -1267,8 +1359,13 @@ async function rollbackRunner(j, m, sh, ctx, { lockChanged, restarted }) {
         if (!r.ok) {
           problems.push(`no se pudo programar el reinicio; ${byHand}`);
         } else {
-          const back = await waitForRunner(m, restartedOn(prev, pidBefore), upgradeHooks.timing.restartTimeoutMs);
-          if (!back) problems.push(`el runner no volvió con ${short(prev)}; ${byHand}`);
+          const seen = {};
+          const back = await waitForRunner(m, restartedOn(prev, pidBefore), upgradeHooks.timing.restartTimeoutMs, seen);
+          if (!back) {
+            const detail = describeLastSeen(seen, { sha: prev, pidBefore }, 'es');
+            logLine(j, `${m.name}: ${detail}`);
+            problems.push(`el runner no volvió con ${short(prev)}; ${detail}; ${byHand}`);
+          }
         }
       }
       const disk = await reach('git rev-parse HEAD', { cwd: ctx.dir }).catch(() => ({ ok: false }));

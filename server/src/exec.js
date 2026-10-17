@@ -22,7 +22,13 @@ export function run(file, args, { cwd, onLine, timeoutMs = 10 * 60 * 1000, env, 
  * the cap lives here, at the spawn, keyed on the command name. Only the real
  * spawn holds a slot: a caller waiting for gitMutex or anything else holds
  * nothing, so a writer queue cannot starve the readers it waits behind.
- * Remote runner machines have their own path and are not counted here.
+ *
+ * A cap of `Infinity` (or 0) means unlimited: that command never allocates a
+ * semaphore slot or queues. The runner process (server/runner.js) sets all
+ * three to Infinity: it serves the board's requests, which the board already
+ * budgets on its side, and a second budget there made `/info` wait behind
+ * slow git calls until the board's upgrade check thought the runner was dead.
+ * Only the board process keeps the 8/4/8 defaults.
  */
 const caps = { gh: 8, ghPerRepo: 4, git: 8 };
 let globalSemsCache = null;
@@ -36,7 +42,10 @@ const ghRepoSems = new Map();
 export function setProcessCaps(next = {}) {
   const prev = { ...caps };
   for (const k of ['gh', 'ghPerRepo', 'git']) {
-    if (next[k] != null) caps[k] = Math.max(1, Math.floor(Number(next[k])) || 1);
+    if (next[k] == null) continue;
+    const n = Number(next[k]);
+    // 0 and Infinity both mean "no cap"; anything else is a whole number >= 1.
+    caps[k] = (n === 0 || n === Infinity) ? Infinity : Math.max(1, Math.floor(n) || 1);
   }
   globalSems().gh.refresh(); globalSems().git.refresh();
   for (const sem of ghRepoSems.values()) sem.refresh();
@@ -72,13 +81,15 @@ function throttled(file, args, cwd, spawnIt) {
   const name = commandName(file);
   const global = globalSems()[name];
   if (!global) return spawnIt();
-  if (name !== 'gh') return global.run(spawnIt);
+  const globalCap = caps[name];
+  if (name !== 'gh') return globalCap === Infinity ? spawnIt() : global.run(spawnIt);
   const key = ghRepoKey(args, cwd);
-  if (!key) return global.run(spawnIt);
+  if (caps.ghPerRepo === Infinity) return globalCap === Infinity ? spawnIt() : global.run(spawnIt);
+  if (!key) return globalCap === Infinity ? spawnIt() : global.run(spawnIt);
   let per = ghRepoSems.get(key);
   if (!per) { per = new Semaphore(() => caps.ghPerRepo); ghRepoSems.set(key, per); }
   // Per-repo first, then global: a repo's queue never sits on global slots.
-  return per.run(() => global.run(spawnIt));
+  return per.run(() => (caps.gh === Infinity ? spawnIt() : global.run(spawnIt)));
 }
 
 /** Run a fixed command string through the shell (needed for npm.cmd on Windows). */

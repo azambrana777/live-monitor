@@ -76,6 +76,7 @@ script('systemctl', [
   'case "$*" in',
   '  *restart*) : > "$FAKE_DIR/restart-requested" ;;',
   '  *WorkingDirectory*) cat "$FAKE_DIR/workdir" 2>/dev/null ;;',
+  '  *MainPID*) if [ -f "$FAKE_DIR/unit-mainpid" ]; then printf "LoadState=loaded\\nActiveState=active\\nMainPID=%s\\n" "$(cat "$FAKE_DIR/unit-mainpid")"; else echo LoadState=not-found; fi ;;',
   'esac',
   'exit 0',
 ].join('\n'));
@@ -928,6 +929,30 @@ test('vuelta atrás del runner con --keep cuando no vuelve tras el reinicio; la 
     flag('norestart', false);
     upgrade.upgradeHooks.timing.restartTimeoutMs = saved;
     rmSync(path.join(repos.box, 'notas-locales.txt'), { force: true });
+  }
+});
+
+test('pre-check: la unidad hfsmon-runner con otro MainPID que el /info falla en runner_check, sin tocar nada', { skip: SHELL_SKIP }, async () => {
+  await noJob();
+  await settleBox();
+  const c4 = commitIn(repos.board, { 'server/src/exec.js': '// exec v4\n' }, 'runner code v4');
+  git(['push', 'origin', 'main'], repos.board);
+  repos.c4 = c4;
+  const other = box.pid + 1000;
+  writeFileSync(path.join(FAKE_DIR, 'unit-mainpid'), String(other));
+  rmSync(path.join(FAKE_DIR, 'calls.log'), { force: true });
+  try {
+    const job = await upgrade.requestUpgrade({ target: LATEST });
+    await upgrade.upgradeRun();
+    assert.equal(job.state, 'failed');
+    assert.equal(job.failedStep, 'runner_check');
+    assert.match(job.error, new RegExp(`pid ${other}`));
+    assert.match(job.error, new RegExp(`pid ${box.pid}`));
+    assert.match(job.error, /systemctl --user restart hfsmon-runner/);
+    assert.doesNotMatch(calls(), /--on-active/, 'sin reinicio programado');
+    assert.equal(head(repos.box), repos.c1, 'el runner no se tocó');
+  } finally {
+    rmSync(path.join(FAKE_DIR, 'unit-mainpid'), { force: true });
   }
 });
 
