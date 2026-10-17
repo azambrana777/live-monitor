@@ -17,7 +17,7 @@ const available = config.claude.available;
 const id = (arg) => resolveModel(available, arg).match?.id;
 
 test('la configuración nombra familias, no versiones: así el CLI elige siempre la última', () => {
-  assert.deepEqual(available.map((m) => m.id), ['opus', 'sonnet', 'fable', 'haiku']);
+  assert.deepEqual(available.map((m) => m.id), ['fable', 'opus', 'sonnet', 'haiku'], 'most capable first');
   const roles = ['triageModel', 'fixModel', 'chatModel', 'demoModel', 'replyModel', 'advisorModel', 'planModel'];
   for (const role of roles) {
     assert.ok(['opus', 'sonnet', 'fable', 'haiku'].includes(config.claude[role]), `${role} = ${config.claude[role]} es una versión concreta, no una familia`);
@@ -33,7 +33,7 @@ test('las palabras cortas resuelven a su familia, y «fable» es una familia má
   assert.equal(id('Fable'), 'fable');
   assert.equal(id('sonnet'), 'sonnet');
   assert.equal(id('haiku'), 'haiku');
-  assert.deepEqual(available.map(shortName), ['opus', 'sonnet', 'fable', 'haiku'], 'lo que /model lista como alias');
+  assert.deepEqual(available.map(shortName), ['fable', 'opus', 'sonnet', 'haiku'], 'lo que /model lista como alias');
 });
 
 test('lo que se escribía antes sigue funcionando: versión, id concreto, etiqueta', () => {
