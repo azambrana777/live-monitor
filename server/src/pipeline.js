@@ -469,6 +469,13 @@ export function lastClassifiedAt(task) {
 }
 /** Whether a quiet task was classified recently enough not to be asked about. */
 export const quietRecently = (task, now = Date.now()) => isQuiet(task) && now - lastClassifiedAt(task) < QUIET_RECHECK_MS;
+/**
+ * A completed task the full cycle need not walk: done, its issue closed, already
+ * classified, with no pending forced start, no reopen marker and no open/draft PR.
+ * For it classification cannot change the state.
+ */
+export const settledDone = (t) => t.state === 'done' && t.issueClosed === true && Boolean(t.classified)
+  && !t.forced && !t.reopenedAt && !(t.prs ?? []).some(isOpenPr);
 
 /**
  * The states a closed issue settles by itself, and deliberately NOT
