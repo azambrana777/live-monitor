@@ -589,6 +589,7 @@ const realSteps = () => ({
   pollProject, sweepClosedIssues, listAllBranches, refreshClassification, refreshBranchStatus,
   refreshStackHealth, refreshChecks, checkChangeRequests, tick, evaluateQuota,
   // The two halves of the checks (pipeline contract); absent -> the old whole-project refreshChecks is used.
+  settledDone: pipelineNs.settledDone,
   prefetchChecks: pipelineNs.prefetchChecks, applyChecksForTask: pipelineNs.applyChecksForTask,
   listTasks: (polling) => store.all().filter((t) => polling.has(t.project) && !t.unassigned),
 });
@@ -725,7 +726,7 @@ export async function runCycle(due, token = {}, levels = null) {
     // Classification and branches both need the warm cache of the forced fetch.
     await fetched;
     if (cancelled()) return;
-    const tasks = S.listTasks(new Set([id])).filter((t) => t.project === id);
+    const tasks = S.listTasks(new Set([id])).filter((t) => t.project === id && !S.settledDone(t));
     progressAdd(token, 'classify', tasks.length);
     progressAdd(token, 'branches', tasks.length);
     progressAdd(token, 'crs', tasks.length);
