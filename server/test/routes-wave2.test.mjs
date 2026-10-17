@@ -82,7 +82,7 @@ before(async () => {
     limits: { defaultMaxActiveTasks: 1, maxActiveTasksCeiling: 2, maxFixIterations: 1, completedShown: 5 },
     claude: {
       chatModel: 'sonnet', advisorModel: 'opus', fixModel: 'sonnet',
-      available: [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }],
+      available: [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'fable', label: 'Fable' }],
     },
   }));
 
@@ -142,7 +142,7 @@ test('GET /api/tuning answers the snapshot and POST /api/tuning validates', asyn
   assert.equal(snap.status, 200);
   assert.ok(snap.body.roles?.fix, 'one entry per role');
   assert.ok(Array.isArray(snap.body.models));
-  assert.ok(!snap.body.models.some((m) => /fable/i.test(m.id)), 'Fable is never offered');
+  assert.ok(snap.body.models.some((m) => m.id === 'fable'), 'Fable is offered');
 
   const bad = await call('POST', '/api/tuning', { roles: { nonsense: { effort: 'high' } } });
   assert.equal(bad.status, 400);

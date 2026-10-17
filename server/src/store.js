@@ -90,38 +90,22 @@ function discoverProjects() {
  *
  * 1. A chat that pinned a version (`claude-opus-4`) moves to its family
  *    (`opus`), so "always the newest" holds for it too.
- * 2. A chat that stores Fable in any spelling (`fable`, `claude-fable-5-1`,
- *    `Fable 5`) while no configured family answers to it goes back to the
- *    default (`model = null`, which every consumer reads as
- *    `config.claude.chatModel`). The board does not use Fable any more, and
- *    such a value can arrive from a task moved in from another machine or
- *    from the runner's own store; left alone, every consumer would pass it
- *    straight to the CLI.
  *
- * Deliberately narrow: Fable only, not «any model outside `available`».
- * A chat pinned to some other id we do not recognise (a newer family the
- * config has not caught up with) may be legitimate, and silently resetting it
- * would overwrite something the user chose; the rule being enforced is about
- * Fable, so that is all this touches.
+ * A chat pinned to an id we do not recognise (a newer family the config has
+ * not caught up with) is left alone: it may be legitimate, and resetting it
+ * would overwrite something the user chose.
  *
  * @param {object} task
  * @param {{id: string}[]} available the configured models.
- * @param {(line: string) => void} [log] gets one Spanish line per chat reset.
+ * @param {(line: string) => void} [_log] unused; kept for the caller's signature.
  */
-export function migrateChatModels(task, available, log) {
+export function migrateChatModels(task, available, _log) {
   for (const chat of chatsOf(task)) {
     // The chat's own effort is stored like its model; a value this board does
     // not know (an old build, a hand edit) goes back to auto instead of reaching the CLI.
     if (chat.effort != null && chat.effort !== 'auto' && !EFFORT_LEVELS.includes(chat.effort)) chat.effort = null;
     const family = familyOf(chat.model, available);
-    if (family) {
-      if (family !== chat.model) chat.model = family;
-      continue;
-    }
-    if (/fable/i.test(String(chat.model ?? ''))) {
-      chat.model = null;
-      log?.(`chat «${chat.title ?? chat.id}» used Fable, which the board no longer uses: it goes back to the default model`);
-    }
+    if (family && family !== chat.model) chat.model = family;
   }
 }
 
@@ -149,7 +133,7 @@ class Store extends EventEmitter {
       resetChatsOnBoot(t);
       // A chat that pinned a version (`claude-opus-4`) moves to its family
       // (`opus`), so "always the newest" holds for it too. A chat pinned to
-      // Fable goes back to the default model; any other unknown pin is left alone.
+      // an unknown pin is left alone.
       migrateChatModels(t, config.claude?.available ?? [], (line) => {
         // Straight onto the log: `addLog` would persist and emit mid-boot,
         // and `flush()` below writes everything once anyway.

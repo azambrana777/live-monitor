@@ -282,7 +282,6 @@ class Settings extends EventEmitter {
           if (o.model === null) delete cur.model;
           else {
             const id = String(o.model).trim();
-            if (/fable/i.test(id)) throw new Error('Fable cannot be chosen');
             if (!isModel(id)) throw new Error(`model «${id}» is not available for ${role}`);
             cur.model = id;
           }

@@ -193,7 +193,7 @@ test('sessionOptions: una combinación no soportada avisa y no lanza', () => {
   assert.equal(seen.length, 1);
 });
 
-test('selectableModels: las familias configuradas, con sus esfuerzos y modos de razonamiento, sin Fable', () => {
+test('selectableModels: las familias configuradas, con sus esfuerzos y modos de razonamiento', () => {
   const list = selectableModels(available);
   assert.deepEqual(list.find((m) => m.id === 'opus').thinking, ['adaptive']);
   assert.deepEqual(list.find((m) => m.id === 'sonnet').thinking, ['adaptive']);
@@ -202,8 +202,7 @@ test('selectableModels: las familias configuradas, con sus esfuerzos y modos de 
   assert.deepEqual(list.map((m) => m.id), available.map((m) => m.id));
   assert.deepEqual(list.find((m) => m.id === 'opus').efforts, CAPABILITIES.opus.efforts);
   assert.deepEqual(list.find((m) => m.id === 'haiku').efforts, []);
-  assert.ok(!/fable/i.test(JSON.stringify(list)));
-  assert.deepEqual(selectableModels([...available, { id: 'fable', label: 'Fable' }]).map((m) => m.id), available.map((m) => m.id));
+  assert.deepEqual(selectableModels([...available, { id: 'fable', label: 'Fable' }]).map((m) => m.id), [...available.map((m) => m.id), 'fable']);
 });
 
 test('config: claude.tuning trae todo en auto y qa.effort/planEffort también', () => {

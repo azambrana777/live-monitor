@@ -45,6 +45,7 @@
     "available": [
       { "id": "opus", "label": "Opus", "hint": "test fixture" },
       { "id": "sonnet", "label": "Sonnet", "hint": "test fixture" },
+      { "id": "fable", "label": "Fable", "hint": "test fixture" },
       { "id": "haiku", "label": "Haiku", "hint": "test fixture" }
     ]
   },

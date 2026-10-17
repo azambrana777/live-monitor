@@ -62,12 +62,10 @@ export function familyOf(id, available = []) {
 /**
  * What the UI may offer as a model: each configured family with the efforts it
  * accepts. Built from `claude.available`, so no version is named here and a
- * family removed from the config disappears. Fable is refused by name
- * whatever the config says.
+ * family removed from the config disappears.
  */
 export function selectableModels(available = []) {
   return available
-    .filter((m) => !/fable/i.test(`${m.id} ${m.label}`))
     .map((m) => {
       const caps = capabilitiesOf(m.id, available);
       return { id: m.id, label: m.label, hint: m.hint ?? null, efforts: [...caps.efforts], thinking: thinkingModesFor(m.id, available), fastMode: caps.fastMode };

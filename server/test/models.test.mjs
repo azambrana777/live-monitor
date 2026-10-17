@@ -17,23 +17,23 @@ const available = config.claude.available;
 const id = (arg) => resolveModel(available, arg).match?.id;
 
 test('la configuración nombra familias, no versiones: así el CLI elige siempre la última', () => {
-  assert.deepEqual(available.map((m) => m.id), ['opus', 'sonnet', 'haiku']);
+  assert.deepEqual(available.map((m) => m.id), ['opus', 'sonnet', 'fable', 'haiku']);
   const roles = ['triageModel', 'fixModel', 'chatModel', 'demoModel', 'replyModel', 'advisorModel', 'planModel'];
   for (const role of roles) {
-    assert.ok(['opus', 'sonnet', 'haiku'].includes(config.claude[role]), `${role} = ${config.claude[role]} es una versión concreta, no una familia`);
+    assert.ok(['opus', 'sonnet', 'fable', 'haiku'].includes(config.claude[role]), `${role} = ${config.claude[role]} es una versión concreta, no una familia`);
   }
   assert.equal(config.qa.model, 'sonnet');
   assert.equal(config.qa.planModel, 'opus');
 });
 
-test('las palabras cortas resuelven a su familia, y «fable» ya no existe en el tablero', () => {
+test('las palabras cortas resuelven a su familia, y «fable» es una familia más', () => {
   assert.equal(id('opus'), 'opus');
   assert.equal(id('Opus'), 'opus');
-  assert.equal(id('fable'), undefined, '/model fable ya no encaja con nada: el tablero no usa Fable');
-  assert.equal(id('Fable'), undefined);
+  assert.equal(id('fable'), 'fable');
+  assert.equal(id('Fable'), 'fable');
   assert.equal(id('sonnet'), 'sonnet');
   assert.equal(id('haiku'), 'haiku');
-  assert.deepEqual(available.map(shortName), ['opus', 'sonnet', 'haiku'], 'lo que /model lista como alias');
+  assert.deepEqual(available.map(shortName), ['opus', 'sonnet', 'fable', 'haiku'], 'lo que /model lista como alias');
 });
 
 test('lo que se escribía antes sigue funcionando: versión, id concreto, etiqueta', () => {
@@ -41,7 +41,7 @@ test('lo que se escribía antes sigue funcionando: versión, id concreto, etique
   assert.equal(id('Opus 5.1'), 'opus');
   assert.equal(id('claude-opus-5'), 'opus', 'el id viejo, por si alguien lo tiene en los dedos');
   assert.equal(id('claude-opus-5-1'), 'opus');
-  assert.equal(id('claude-fable-5-1'), undefined, 'un id de Fable no se adivina como otra familia');
+  assert.equal(id('claude-fable-5-1'), 'fable', 'un id de Fable es de la familia fable, no de otra');
   assert.equal(id('claude-haiku-4-5-20251001'), 'haiku');
 });
 
@@ -54,7 +54,7 @@ test('lo que no existe no se adivina, y lo ambiguo se devuelve como tal', () => 
 test('familyOf lleva un id concreto a su familia, y deja en paz lo que no es de ninguna', () => {
   assert.equal(familyOf('claude-opus-5', available), 'opus');
   assert.equal(familyOf('claude-opus-5-1', available), 'opus');
-  assert.equal(familyOf('claude-fable-5-1', available), null, 'Fable ya no es una familia configurada');
+  assert.equal(familyOf('claude-fable-5-1', available), 'fable');
   assert.equal(familyOf('claude-haiku-4-5-20251001', available), 'haiku');
   assert.equal(familyOf('opus', available), 'opus', 'un alias es de su propia familia');
   assert.equal(familyOf('gpt-5', available), null);

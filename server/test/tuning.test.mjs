@@ -10,6 +10,7 @@ import { setCapabilitiesForTest } from '../src/capabilities.js';
 const AVAILABLE = [
   { id: 'opus', label: 'Opus' },
   { id: 'sonnet', label: 'Sonnet' },
+  { id: 'fable', label: 'Fable' },
   { id: 'haiku', label: 'Haiku' },
 ];
 const cfg = (over = {}) => ({
@@ -97,26 +98,17 @@ test('tuningFor exposes the available list for the effort helpers', () => {
   assert.deepEqual(tuningFor('fix', cfg()).available, AVAILABLE);
 });
 
-test('never returns Fable: config default is used, and it warns once', () => {
-  const warns = [];
-  const real = console.warn;
-  console.warn = (...a) => warns.push(a.join(' '));
-  try {
-    const bad = cfg({ claude: { fixModel: 'claude-fable-5', available: [{ id: 'claude-fable-5', label: 'Fable' }, ...AVAILABLE] } });
-    assert.equal(tuningFor('fix', bad).model, 'opus');
-    assert.equal(tuningFor('fix', bad).model, 'opus');
-    assert.equal(warns.filter((w) => /Fable/.test(w)).length, 1);
-    assert.equal(tuningFor('chat', bad).model, 'sonnet');
-  } finally {
-    console.warn = real;
-  }
+test('a role may resolve to Fable, from the config default or an override', () => {
+  const c = cfg({ claude: { fixModel: 'fable', available: [{ id: 'fable', label: 'Fable' }, ...AVAILABLE] } });
+  assert.equal(tuningFor('fix', c).model, 'fable');
+  setTuning({ roles: { chat: { model: 'fable' } } }, c);
+  assert.equal(tuningFor('chat', c).model, 'fable');
 });
 
 test('setTuning rejects unknown roles and models, but never an effort a model lacks', () => {
   const c = cfg();
   assert.throws(() => setTuning({ roles: { nope: { effort: 'low' } } }, c), /role «nope»/);
   assert.throws(() => setTuning({ roles: { fix: { model: 'gpt-9' } } }, c), /is not available/);
-  assert.throws(() => setTuning({ roles: { fix: { model: 'claude-fable-5' } } }, c), /no disponible|Fable/);
   assert.throws(() => setTuning({ roles: { fix: { effort: 'turbo' } } }, c), /effort/);
   assert.deepEqual(settings.tuning, { roles: {} });
   // Not a 400 any more: stored as chosen, clamped when a session opens.
@@ -201,10 +193,10 @@ test('snapshot shape', () => {
   assert.equal(snap.fastModeStatus, null);   // no probe has answered
   assert.deepEqual(snap.newModels, []);
   assert.equal('contextWindow' in snap, false);
-  assert.deepEqual(snap.models.map((m) => m.id), ['opus', 'sonnet', 'haiku']);
+  assert.deepEqual(snap.models.map((m) => m.id), ['opus', 'sonnet', 'fable', 'haiku']);
   assert.deepEqual(snap.models[1].efforts, [...CAPABILITIES.sonnet.efforts]);
   assert.deepEqual(snap.models[0].thinking, ['adaptive']);
-  assert.deepEqual(snap.models[2].thinking, ['enabled', 'disabled']);
+  assert.deepEqual(snap.models[3].thinking, ['enabled', 'disabled']);
   assert.equal(snap.models[0].fastMode, true);
   assert.deepEqual(snap.overrides.roles.plan, { model: 'sonnet', effort: 'low' });
 });
@@ -226,7 +218,7 @@ const STEP0 = [
   row('claude-opus-4-6', 'claude-opus-4-6'), row('claude-sonnet-4-6', 'claude-sonnet-4-6'),
 ];
 
-test('newModels: none with the Step-0 list, one for a higher version, a new family counts, Fable never', () => {
+test('newModels: none with the Step-0 list, one for a higher version, a new family counts', () => {
   const c = cfg();
   assert.deepEqual(tuningSnapshot(c).newModels, []);                     // no probe
   setCapabilitiesForTest({ models: STEP0, init: {}, at: 1 });
