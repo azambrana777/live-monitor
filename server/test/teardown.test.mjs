@@ -61,6 +61,22 @@ test('removeTreeReported writes the wait to stderr only when there was one', FAS
   assert.deepEqual(lines, []);
 });
 
+// The flake this pins: with the whole suite running, a removal that works at the
+// FIRST attempt can still take a millisecond or more (the machine stalls between the
+// two clock reads). `removeTree` used to report that elapsed time as a wait, so the
+// «only when there was one» test saw 1 instead of 0 and a line on stderr.
+test('a removal that works at the first attempt never counts as a wait, however slow the machine is', FAST, async () => {
+  const slowButFirstTry = () => {
+    const until = performance.now() + 8;
+    while (performance.now() < until) { /* a stalled machine */ }
+  };
+  assert.equal(await removeTree('x', { remove: slowButFirstTry }), 0);
+
+  const lines = [];
+  assert.equal(await removeTreeReported('t', 'x', { remove: slowButFirstTry, write: (s) => lines.push(s) }), 0);
+  assert.deepEqual(lines, [], 'nothing is written when nothing had to be retried');
+});
+
 test('removeTreeReported throws on a stuck directory unless tolerate is set', FAST, async () => {
   const lines = [];
   const original = lock('EBUSY');

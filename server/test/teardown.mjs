@@ -27,16 +27,23 @@ const removeNow = (target) => rmSync(target, { recursive: true, force: true });
  * Removes a directory tree, retrying while something still holds it. Resolves with
  * how many milliseconds it had to wait, and rejects with the original error once
  * `timeoutMs` has passed or the error is not a lock. `remove` is injectable for tests.
+ *
+ * A removal that works at the first attempt waited for nothing, so it resolves `0`
+ * however long the call took: under load even a successful first attempt can take a
+ * millisecond or more, and reporting that as a wait made callers print a lock that
+ * never happened.
  */
 export async function removeTree(target, { timeoutMs = 10_000, stepMs = 50, remove = removeNow } = {}) {
   const startedAt = performance.now();
+  let retried = false;
   for (;;) {
     try {
       remove(target);
-      return Math.round(performance.now() - startedAt);
+      return retried ? Math.round(performance.now() - startedAt) : 0;
     } catch (e) {
       if (!LOCKED.has(e.code) || performance.now() - startedAt >= timeoutMs) throw e;
     }
+    retried = true;
     await new Promise((resolve) => { setTimeout(resolve, stepMs); });
   }
 }
