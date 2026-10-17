@@ -945,6 +945,25 @@ function runnerShell(j, m) {
   };
 }
 
+const FALLBACK_RUNNER_UNIT = 'hfsmon-runner.service';
+const UNIT_NAME_RE = /^[A-Za-z0-9@_.:-]+$/;
+
+/** The unit `/info` reports, validated and with its `.service` suffix; null if absent or odd. */
+function reportedRunnerUnit(info) {
+  if (typeof info?.unit !== 'string') return null;
+  const bare = info.unit.trim().replace(/\.service$/, '');
+  return bare && UNIT_NAME_RE.test(bare) ? `${bare}.service` : null;
+}
+
+/**
+ * The systemd user unit the runner runs under: the one `/info` reports (it
+ * ends up in shell commands, so only a plain unit name is accepted), or, for a
+ * runner too old to say, the historical `hfsmon-runner.service`.
+ */
+export function runnerUnitName(info) {
+  return reportedRunnerUnit(info) ?? FALLBACK_RUNNER_UNIT;
+}
+
 /**
  * Where the runner's checkout is: `/info` says so since it learned to; an
  * older runner is asked where its own process runs, then systemd.
@@ -958,7 +977,7 @@ export async function locateMonitorDir(m, info, sh) {
   const fromProc = await sh('dirname "$(readlink -f /proc/$PPID/cwd)"', { timeoutMs: 15_000 });
   const procDir = fromProc.ok ? fromProc.stdout.trim() : '';
   if (await looksRight(procDir)) return procDir;
-  const fromUnit = await sh(`${SYSTEMD_ENV}; systemctl --user show -p WorkingDirectory --value hfsmon-runner`, { timeoutMs: 15_000 });
+  const fromUnit = await sh(`${SYSTEMD_ENV}; systemctl --user show -p WorkingDirectory --value ${runnerUnitName(info)}`, { timeoutMs: 15_000 });
   const workDir = fromUnit.ok ? fromUnit.stdout.trim() : '';
   const unitDir = workDir ? path.posix.dirname(workDir) : '';
   if (await looksRight(unitDir)) return unitDir;
@@ -995,7 +1014,7 @@ export async function waitForRunner(m, test, timeoutMs, seen = {}) {
 }
 
 /** What the board saw last, in one line, plus a diagnosis. */
-export function describeLastSeen(seen, { sha, pidBefore }, lang = 'en') {
+export function describeLastSeen(seen, { sha, pidBefore, unit = FALLBACK_RUNNER_UNIT }, lang = 'en') {
   const es = lang === 'es';
   const info = seen?.info;
   const parts = (i) => {
@@ -1019,8 +1038,8 @@ export function describeLastSeen(seen, { sha, pidBefore }, lang = 'en') {
     const pidKnown = Number.isInteger(pidBefore) && Number.isInteger(info.pid);
     if (pidKnown && info.pid === pidBefore) {
       diagnosis = es
-        ? 'el reinicio no sustituyó al proceso que escucha en este puerto; comprueba que la unidad hfsmon-runner es la que lo ejecuta'
-        : 'the restart did not replace the process that listens on this port; check that the hfsmon-runner unit is the one running it';
+        ? `el reinicio no sustituyó al proceso que escucha en este puerto; comprueba que la unidad ${unit} es la que lo ejecuta`
+        : `the restart did not replace the process that listens on this port; check that the ${unit} unit is the one running it`;
     } else if (info.commit !== sha || info.diskCommit !== sha) {
       diagnosis = es ? 'el runner se reinició desde otro checkout o commit' : 'the runner restarted from another checkout/commit';
     } else {
@@ -1035,31 +1054,43 @@ export function describeLastSeen(seen, { sha, pidBefore }, lang = 'en') {
  * serves `/info`. `fail` means a restart would not replace the live process;
  * any trouble running the probe is a `warn`, never a block.
  */
-export async function checkUnitPid(sh, info, { restartNeeded = true } = {}) {
+export async function checkUnitPid(sh, info, { restartNeeded = true, unit = runnerUnitName(info) } = {}) {
   let out;
   try {
-    out = await sh(`${SYSTEMD_ENV}; systemctl --user show hfsmon-runner -p LoadState -p MainPID -p ActiveState`, { timeoutMs: 15_000 });
+    out = await sh(`${SYSTEMD_ENV}; systemctl --user show ${unit} -p LoadState -p MainPID -p ActiveState`, { timeoutMs: 15_000 });
   } catch (e) {
-    return { level: 'warn', message: `could not read the hfsmon-runner unit (${e.message})` };
+    return { level: 'warn', message: `could not read the ${unit} unit (${e.message})` };
   }
-  if (!out?.ok) return { level: 'warn', message: `could not read the hfsmon-runner unit (${lastLines(out?.stderr) || `code ${out?.code}`})` };
+  if (!out?.ok) return { level: 'warn', message: `could not read the ${unit} unit (${lastLines(out?.stderr) || `code ${out?.code}`})` };
   const props = {};
   for (const line of String(out.stdout).split(/\r?\n/)) {
     const eq = line.indexOf('=');
     if (eq > 0) props[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
   }
-  if (props.LoadState === 'not-found') return { level: 'ok', message: null };
+  if (props.LoadState === 'not-found') {
+    // Nothing to compare, but a restart that is coming would hit a unit that
+    // does not exist: say so now, not after the code was already pulled.
+    if (!restartNeeded) return { level: 'ok', message: null };
+    const pid = Number.isInteger(info?.pid) ? info.pid : '?';
+    const hint = reportedRunnerUnit(info)
+      ? ''
+      : '; the runner did not report its unit, so it may be an older version: restart it once by hand (systemctl --user restart <its unit>, or kill it and start it again) and upgrade again';
+    return {
+      level: 'fail',
+      message: `the runner process (pid ${pid}) is not managed by a systemd user unit named ${unit}: the board cannot restart it; start it under a user unit or restart it by hand${hint}`,
+    };
+  }
   if (!props.ActiveState || !/^\d+$/.test(props.MainPID ?? '')) {
-    return { level: 'warn', message: 'the hfsmon-runner unit answered something unexpected' };
+    return { level: 'warn', message: `the ${unit} unit answered something unexpected` };
   }
   const mainPid = Number(props.MainPID);
   const servedPid = Number.isInteger(info?.pid) ? info.pid : null;
   const active = props.ActiveState === 'active';
   if (active && (servedPid === null || mainPid === servedPid)) return { level: 'ok', message: null };
-  const fix = `to fix it, the owner runs on the runner: kill ${servedPid ?? '<pid>'} (the process serving the port), then systemctl --user restart hfsmon-runner`;
+  const fix = `to fix it, the owner runs on the runner: kill ${servedPid ?? '<pid>'} (the process serving the port), then systemctl --user restart ${unit}`;
   const message = active
-    ? `the hfsmon-runner unit runs pid ${mainPid}, but the process answering /info is pid ${servedPid}: restarting the unit will not replace it; ${fix}`
-    : `the hfsmon-runner unit is ${props.ActiveState} (MainPID ${mainPid}) while pid ${servedPid ?? '?'} answers /info: restarting the unit will not replace it; ${fix}`;
+    ? `the ${unit} unit runs pid ${mainPid}, but the process answering /info is pid ${servedPid}: restarting the unit will not replace it; ${fix}`
+    : `the ${unit} unit is ${props.ActiveState} (MainPID ${mainPid}) while pid ${servedPid ?? '?'} answers /info: restarting the unit will not replace it; ${fix}`;
   return { level: restartNeeded ? 'fail' : 'warn', message };
 }
 
@@ -1176,6 +1207,7 @@ async function upgradeRunner(j, m) {
   await withStep(j, 'runner_check', m.name, async (step) => {
     const info = await runnerInfo(m);
     ctx.info = info;
+    ctx.unit = runnerUnitName(info);
     rec.cliBefore = info.claude ?? null;
     const dir = await locateMonitorDir(m, info, sh);
     if (!dir) throw new Error('the runner folder was not found');
@@ -1210,7 +1242,7 @@ async function upgradeRunner(j, m) {
     }
     let unitWarn = null;
     if (ctx.bus) {
-      const unit = await checkUnitPid(sh, info, { restartNeeded: ctx.codeBehind || ctx.staleProcess });
+      const unit = await checkUnitPid(sh, info, { restartNeeded: ctx.codeBehind || ctx.staleProcess, unit: ctx.unit });
       if (unit.level === 'fail') throw new Error(unit.message);
       if (unit.level === 'warn') unitWarn = unit.message;
     }
@@ -1283,13 +1315,13 @@ async function upgradeRunner(j, m) {
       ctx.touched = true;
       restarted = true;
       const pidBefore = (await runnerInfo(m).catch(() => ctx.info))?.pid;
-      const r = await sh(systemdRun(`hfsmon-upgrade-${j.id}-restart`, '--on-active=2s systemctl --user restart hfsmon-runner'), { timeoutMs: 30_000 });
+      const r = await sh(systemdRun(`hfsmon-upgrade-${j.id}-restart`, `--on-active=2s systemctl --user restart ${ctx.unit}`), { timeoutMs: 30_000 });
       if (!r.ok) throw new Error(`could not schedule the restart: ${lastLines(r.stderr) || `code ${r.code}`}`);
       const { restartTimeoutMs } = upgradeHooks.timing;
       const seen = {};
       const back = await waitForRunner(m, restartedOn(expected, pidBefore), restartTimeoutMs, seen);
       if (!back) {
-        const detail = describeLastSeen(seen, { sha: expected, pidBefore });
+        const detail = describeLastSeen(seen, { sha: expected, pidBefore, unit: ctx.unit });
         logLine(j, `${m.name}: ${detail}`);
         throw new Error(`the runner did not come back with ${short(expected)} in ${Math.round(restartTimeoutMs / 1000)} s; ${detail}`);
       }
@@ -1333,7 +1365,7 @@ async function rollbackRunner(j, m, sh, ctx, { lockChanged, restarted }) {
   const rec = j.runners[m.name];
   const prev = ctx.head;
   const user = String(ctx.info?.home ?? '').split('/').filter(Boolean).pop() || '';
-  const byHand = `arréglalo por ssh: ssh ${user ? `${user}@` : ''}${m.host}; cd ${ctx.dir}; git reset --keep ${prev}; systemctl --user restart hfsmon-runner`;
+  const byHand = `arréglalo por ssh: ssh ${user ? `${user}@` : ''}${m.host}; cd ${ctx.dir}; git reset --keep ${prev}; systemctl --user restart ${ctx.unit}`;
   // The runner itself may be what is broken: new code that does not boot
   // leaves nothing to send the rollback through.
   const reach = async (script, opts) => {
@@ -1355,14 +1387,14 @@ async function rollbackRunner(j, m, sh, ctx, { lockChanged, restarted }) {
       }
       if (restarted) {
         const pidBefore = (await runnerInfo(m).catch(() => ctx.info))?.pid;
-        const r = await reach(systemdRun(`hfsmon-upgrade-${j.id}-rollback`, '--on-active=2s systemctl --user restart hfsmon-runner'), { timeoutMs: 30_000 });
+        const r = await reach(systemdRun(`hfsmon-upgrade-${j.id}-rollback`, `--on-active=2s systemctl --user restart ${ctx.unit}`), { timeoutMs: 30_000 });
         if (!r.ok) {
           problems.push(`no se pudo programar el reinicio; ${byHand}`);
         } else {
           const seen = {};
           const back = await waitForRunner(m, restartedOn(prev, pidBefore), upgradeHooks.timing.restartTimeoutMs, seen);
           if (!back) {
-            const detail = describeLastSeen(seen, { sha: prev, pidBefore }, 'es');
+            const detail = describeLastSeen(seen, { sha: prev, pidBefore, unit: ctx.unit }, 'es');
             logLine(j, `${m.name}: ${detail}`);
             problems.push(`el runner no volvió con ${short(prev)}; ${detail}; ${byHand}`);
           }

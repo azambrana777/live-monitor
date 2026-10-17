@@ -1,13 +1,50 @@
 import express from 'express';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { LocalMachine } from '../machine.js';
 import { PROJECT_WORKTREE_DIR } from '../keys.js';
+
+const UNIT_RE = /^[A-Za-z0-9@_.:-]+\.service$/;
+const USER_MANAGER_RE = /^user@\d+\.service$/;
+
+/**
+ * The systemd user service a process lives in, from the text of
+ * `/proc/self/cgroup` (cgroup v2 `0::/path` or v1 `N:name=systemd:/path`).
+ * Only a service under a `user@<uid>.service` manager counts; a session scope,
+ * a system service or anything unparseable is `null`. Returns the full name,
+ * `.service` included.
+ */
+export function unitFromCgroup(text) {
+  if (typeof text !== 'string') return null;
+  const paths = [];
+  for (const line of text.split('\n')) {
+    const i = line.indexOf(':');
+    const j = i < 0 ? -1 : line.indexOf(':', i + 1);
+    if (j < 0) continue;
+    const hierarchy = line.slice(i + 1, j);
+    if (hierarchy === '' || hierarchy === 'name=systemd') paths.push([hierarchy, line.slice(j + 1).trim()]);
+  }
+  paths.sort((a, b) => (a[0] === '' ? -1 : 0) - (b[0] === '' ? -1 : 0));
+  for (const [, p] of paths) {
+    const segs = p.split('/').filter(Boolean);
+    const mgr = segs.findIndex((x) => USER_MANAGER_RE.test(x));
+    if (mgr < 0) continue;
+    for (let k = segs.length - 1; k > mgr; k--) {
+      if (segs[k].endsWith('.service')) return UNIT_RE.test(segs[k]) ? segs[k] : null;
+    }
+  }
+  return null;
+}
+
+function readOwnUnit() {
+  if (process.platform !== 'linux') return null;
+  try { return unitFromCgroup(readFileSync('/proc/self/cgroup', 'utf8')); } catch { return null; }
+}
 
 /**
  * The runner: a `LocalMachine` served over the network.
@@ -44,6 +81,7 @@ export function createRunner({
   // came back from this answer), so each read has its own bound and falls back
   // to the last value seen; `degraded` says something was cut short.
   const startCommit = headOf(machine, checkoutDir);
+  const unit = readOwnUnit();
   const last = { commit: null, diskCommit: null, base: null };
   const bounded = (p, ms) => new Promise((resolve) => {
     const t = setTimeout(() => resolve(BOUND), ms);
@@ -79,6 +117,8 @@ export function createRunner({
       commit: last.commit,
       diskCommit: last.diskCommit,
       monitorDir: checkoutDir,
+      // systemd user service this runner runs under (cached at startup), or null.
+      unit,
       degraded,
     });
   });

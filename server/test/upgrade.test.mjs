@@ -73,10 +73,14 @@ script('systemd-run', [
 ].join('\n'));
 script('systemctl', [
   'echo "systemctl $*" >> "$FAKE_DIR/calls.log"',
+  // The unit that exists on the fake box: `unit-name` (default hfsmon-runner),
+  // with or without the .service suffix; any other name is not-found.
+  'want="$(cat "$FAKE_DIR/unit-name" 2>/dev/null || echo hfsmon-runner)"',
+  'asked=""; skip=""; for a in "$@"; do if [ -n "$skip" ]; then skip=""; continue; fi; case "$a" in -p) skip=1 ;; -*|show|restart) ;; *) asked="${a%.service}" ;; esac; done',
   'case "$*" in',
-  '  *restart*) : > "$FAKE_DIR/restart-requested" ;;',
+  '  *restart*) if [ "$asked" = "$want" ]; then : > "$FAKE_DIR/restart-requested"; else echo "Unit $asked.service not found." >&2; exit 5; fi ;;',
   '  *WorkingDirectory*) cat "$FAKE_DIR/workdir" 2>/dev/null ;;',
-  '  *MainPID*) if [ -f "$FAKE_DIR/unit-mainpid" ]; then printf "LoadState=loaded\\nActiveState=active\\nMainPID=%s\\n" "$(cat "$FAKE_DIR/unit-mainpid")"; else echo LoadState=not-found; fi ;;',
+  '  *MainPID*) if [ "$asked" != "$want" ]; then echo LoadState=not-found; else printf "LoadState=loaded\\nActiveState=active\\nMainPID=%s\\n" "$(cat "$FAKE_DIR/unit-mainpid" 2>/dev/null || cat "$FAKE_DIR/box-pid" 2>/dev/null)"; fi ;;',
   'esac',
   'exit 0',
 ].join('\n'));
@@ -125,7 +129,7 @@ const exits = [];
 
 const TOKEN = 'secreto-de-prueba';
 const repos = {};
-const box = { runningCommit: null, down: false, pid: 1000, legacy: false };
+const box = { runningCommit: null, down: false, pid: 1000, legacy: false, unit: undefined };
 
 const RESTART_MARKER = () => path.join(FAKE_DIR, 'restart-requested');
 
@@ -246,6 +250,8 @@ before(async () => {
         diskCommit: head(repos.box),
       };
       // A runner from before U3 (2ed2c6c): no commit, no diskCommit, no monitorDir.
+      writeFileSync(path.join(FAKE_DIR, 'box-pid'), String(box.pid));
+      if (box.unit !== undefined) out.unit = box.unit;
       if (box.legacy) {
         delete out.commit;
         delete out.diskCommit;
@@ -997,6 +1003,92 @@ test('solo los runners: SDK al día con un runner atrasado, termina en done sin 
     registryState.latest = LATEST;
     fakeClaude(CLI_LATEST);
   }
+});
+
+// --- the runner's unit name comes from /info -----------------------------
+
+const unitCase = async (name, { reported, existing, rollback = false }, check) => {
+  await noJob();
+  await settleBox();
+  const n = (repos.unitN = (repos.unitN ?? 0) + 1);
+  commitIn(repos.board, { 'server/src/runner-client.js': `// unit case ${name} ${n}` }, `runner code unit ${n}`);
+  git(['push', 'origin', 'main'], repos.board);
+  box.unit = reported;
+  writeFileSync(path.join(FAKE_DIR, 'unit-name'), existing);
+  if (rollback) flag('norestart', true);
+  const saved = upgrade.upgradeHooks.timing.restartTimeoutMs;
+  if (rollback) upgrade.upgradeHooks.timing.restartTimeoutMs = 10_000;
+  const before = head(repos.box);
+  rmSync(path.join(FAKE_DIR, 'calls.log'), { force: true });
+  registryState.latest = CURRENT;
+  try {
+    await call('POST', '/api/upgrade', { target: CURRENT });
+    await upgrade.upgradeRun();
+    await check(upgrade.getUpgradeJob(), before);
+  } finally {
+    registryState.latest = LATEST;
+    box.unit = undefined;
+    rmSync(path.join(FAKE_DIR, 'unit-name'), { force: true });
+    flag('norestart', false);
+    upgrade.upgradeHooks.timing.restartTimeoutMs = saved;
+    await settleBox();
+  }
+};
+
+test('unit from /info: the pre-check, the restart and the pid wait all use livemon-runner.service', { skip: SHELL_SKIP }, async () => {
+  await unitCase('reported', { reported: 'livemon-runner.service', existing: 'livemon-runner' }, async (job) => {
+    assert.equal(job.state, 'done', job.error);
+    const log = calls();
+    assert.match(log, /systemctl --user show livemon-runner\.service -p LoadState/);
+    assert.match(log, /--on-active=2s systemctl --user restart livemon-runner\.service/);
+    assert.doesNotMatch(log, /restart hfsmon-runner/);
+    assert.doesNotMatch(log, /show hfsmon-runner/);
+  });
+});
+
+test('unit from /info: a unit that does not exist fails runner_check early, schedules no restart, touches nothing', { skip: SHELL_SKIP }, async () => {
+  await unitCase('missing', { reported: 'livemon-runner.service', existing: 'something-else' }, async (job, before) => {
+    assert.equal(job.state, 'failed');
+    assert.equal(job.failedStep, 'runner_check');
+    assert.match(job.error, /the runner process \(pid \d+\) is not managed by a systemd user unit named livemon-runner\.service: the board cannot restart it; start it under a user unit or restart it by hand/);
+    assert.doesNotMatch(job.error, /older version/);
+    assert.doesNotMatch(calls(), /--on-active/);
+    assert.equal(head(repos.box), before, 'ni un git reset');
+  });
+});
+
+test('old runner (no unit in /info) whose unit has another name: fails early and says to restart it once by hand', { skip: SHELL_SKIP }, async () => {
+  await unitCase('old-other', { reported: undefined, existing: 'livemon-runner' }, async (job, before) => {
+    assert.equal(job.state, 'failed');
+    assert.equal(job.failedStep, 'runner_check');
+    assert.match(job.error, /named hfsmon-runner\.service/);
+    assert.match(job.error, /older version/);
+    assert.match(job.error, /restart it once by hand/);
+    assert.doesNotMatch(calls(), /--on-active/);
+    assert.equal(head(repos.box), before);
+  });
+});
+
+test('old runner (no unit in /info) whose unit is hfsmon-runner still upgrades, and an injected unit name is ignored', { skip: SHELL_SKIP }, async () => {
+  for (const reported of [undefined, 'x; rm -rf ~']) {
+    await unitCase('fallback', { reported, existing: 'hfsmon-runner' }, async (job) => {
+      assert.equal(job.state, 'done', job.error);
+      assert.match(calls(), /--on-active=2s systemctl --user restart hfsmon-runner\.service/);
+      assert.doesNotMatch(calls(), /rm -rf/);
+    });
+  }
+});
+
+test('unit from /info: the rollback restarts the same unit', { skip: SHELL_SKIP }, async () => {
+  await unitCase('rollback', { reported: 'livemon-runner.service', existing: 'livemon-runner', rollback: true }, async (job, before) => {
+    assert.equal(job.state, 'failed');
+    assert.equal(job.failedStep, 'runner_restart');
+    assert.equal(head(repos.box), before, 'de vuelta en el commit de antes');
+    const log = calls();
+    assert.match(log, new RegExp(`--unit=hfsmon-upgrade-${job.id}-rollback .*--on-active=2s systemctl --user restart livemon-runner\.service`));
+    assert.doesNotMatch(log, /restart hfsmon-runner/);
+    assert.match(job.error, /livemon-runner\.service/);
+  });
 });
 
 test('al día, la detección describe la versión instalada en vez de un marcador de nulos', async () => {
