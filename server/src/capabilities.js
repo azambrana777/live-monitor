@@ -14,9 +14,8 @@
 let state = null;
 
 const lower = (v) => String(v ?? '').toLowerCase();
-const isFable = (row) => lower(row?.value).includes('fable') || lower(row?.resolvedModel).includes('fable');
-// Usable rows: the `default` pseudo-row and anything Fable never count.
-const usable = (rows) => (Array.isArray(rows) ? rows : []).filter((r) => r && r.value !== 'default' && !isFable(r));
+// Usable rows: everything but the `default` pseudo-row.
+const usable = (rows) => (Array.isArray(rows) ? rows : []).filter((r) => r && r.value !== 'default');
 
 /** The configured alias a model id belongs to (same rule as `models.js#familyOf`, which cannot be imported here). */
 function familyIn(id, available) {
@@ -31,7 +30,7 @@ function familyIn(id, available) {
 /**
  * Live capabilities of one model, or null when the probe has not answered.
  * Crosses by `value` first, then by the family of `resolvedModel`; the
- * `default` row is ignored and Fable rows are never exposed.
+ * `default` row is ignored.
  * @param {string} modelId the id the board sends (an alias like `opus`, or a full id).
  * @param {{id:string}[]} [available] `config.claude.available`, to cross by alias.
  * @returns {{efforts:string[], fastMode:boolean, adaptiveThinking:boolean}|null}
@@ -40,7 +39,7 @@ export function liveCapabilities(modelId, available = []) {
   const rows = usable(state?.models);
   if (!rows.length) return null;
   const id = lower(modelId);
-  if (!id || id.includes('fable')) return null;
+  if (!id) return null;
   let row = rows.find((r) => lower(r.value) === id);
   if (!row) row = rows.find((r) => lower(r.resolvedModel) === id);
   if (!row) {
@@ -75,7 +74,7 @@ export function fastModeStatus() {
 }
 
 /**
- * The models the CLI offers, without the `default` row and without Fable.
+ * The models the CLI offers, without the `default` row.
  * @returns {{value:string, displayName:string, resolvedModel:string}[]|null}
  */
 export function cliModels() {

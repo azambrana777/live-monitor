@@ -40,7 +40,6 @@ test('invalid patches throw and keep the previous value', () => {
   settings.updateTuning({ roles: { fix: { effort: 'low' } } });
   assert.throws(() => settings.updateTuning({ roles: { nope: { effort: 'low' } } }), /role «nope»/);
   assert.throws(() => settings.updateTuning({ roles: { fix: { effort: 'turbo' } } }), /effort/);
-  assert.throws(() => settings.updateTuning({ roles: { fix: { model: 'claude-fable-5' } } }), /Fable/);
   assert.throws(() => settings.updateTuning({ roles: { fix: { model: 'x' } } }, { isModel: () => false }), /is not available/);
   assert.throws(() => settings.updateTuning({ roles: { fix: { color: 1 } } }), /color/);
   assert.throws(() => settings.updateTuning({ fastMode: 'yes' }), /fastMode/);

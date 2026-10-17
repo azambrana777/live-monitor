@@ -33,12 +33,13 @@ export const EFFORT_LEVELS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'm
 /**
  * By family alias, as `config.claude.available` names them. Anything absent
  * from a family is something the board does not offer it. `thinking` lists the
- * modes the family accepts: Opus and Sonnet 5.x only `adaptive` (anything else
+ * modes the family accepts: Opus, Sonnet and Fable 5.x only `adaptive` (anything else
  * answers 400), Haiku only a fixed budget (`enabled`) or none (`disabled`).
  */
 export const CAPABILITIES = Object.freeze({
   opus: Object.freeze({ efforts: ['low', 'medium', 'high', 'xhigh', 'max'], fastMode: true, adaptiveThinking: true, thinking: ['adaptive'] }),
   sonnet: Object.freeze({ efforts: ['low', 'medium', 'high', 'xhigh', 'max'], fastMode: false, adaptiveThinking: true, thinking: ['adaptive'] }),
+  fable: Object.freeze({ efforts: ['low', 'medium', 'high', 'xhigh', 'max'], fastMode: false, adaptiveThinking: true, thinking: ['adaptive'] }),
   haiku: Object.freeze({ efforts: [], fastMode: false, adaptiveThinking: false, thinking: ['enabled', 'disabled'] }),
 });
 

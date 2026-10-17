@@ -41,6 +41,11 @@
         "hint": "equilibrio calidad/velocidad"
       },
       {
+        "id": "fable",
+        "label": "Fable",
+        "hint": "la familia más reciente"
+      },
+      {
         "id": "haiku",
         "label": "Haiku",
         "hint": "el más rápido"

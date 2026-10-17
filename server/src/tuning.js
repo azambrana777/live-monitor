@@ -18,8 +18,6 @@ import { cliModels, fastModeStatus } from './capabilities.js';
 
 export { TUNING_ROLES };
 
-const isFable = (id) => /fable/i.test(String(id ?? ''));
-
 /** Where each role's config default lives, with the fallbacks the pipeline always had. */
 const MODEL_OF = {
   triage: (c) => c.claude?.triageModel,
@@ -53,9 +51,6 @@ function assertRole(role) {
   if (!TUNING_ROLES.includes(role)) throw new Error(`role «${role}» does not exist: use ${TUNING_ROLES.join(', ')}`);
 }
 
-/** The first non-Fable model id the config offers, the last resort when a role resolves to Fable. */
-const safeModel = (cfg) => selectableModels(cfg.claude?.available ?? [])[0]?.id;
-
 /**
  * The model, effort and board-wide knobs for one role.
  *
@@ -70,12 +65,7 @@ export function tuningFor(role, cfg = config) {
   const available = cfg.claude?.available ?? [];
   const def = MODEL_OF[role](cfg);
 
-  let model = mine.model ?? def;
-  if (isFable(model)) {
-    const fallback = !isFable(def) ? def : safeModel(cfg);
-    warnOnce(`model:${role}:${model}`, `el rol ${role} resolvía a un modelo Fable (${model}); se usa ${fallback}`);
-    model = fallback;
-  }
+  const model = mine.model ?? def;
 
   let effort;
   try {
@@ -153,7 +143,7 @@ function compareVersions(a, b) {
  * Models the CLI offers that the board's list does not know about yet: one
  * whose `resolvedModel` is no configured alias's, and whose family is either
  * not configured or has a higher version than anything a configured alias
- * resolves to. Fable, `default` (`cliModels` drops it) and dismissed ones
+ * resolves to. `default` (`cliModels` drops it) and dismissed ones
  * (`settings.tuning.dismissedModels`) never count.
  *
  * @returns {{value: string, displayName: string, resolvedModel: string}[]} `resolvedModel` is what `dismissModel` takes.
@@ -175,7 +165,7 @@ function newModelsOf(cfg) {
   const seen = new Set();
   for (const r of rows) {
     const id = r.resolvedModel;
-    if (isFable(id) || isFable(r.value) || owned.has(id) || dismissed.has(id) || seen.has(id)) continue;
+    if (owned.has(id) || dismissed.has(id) || seen.has(id)) continue;
     if (aliases.has(String(r.value).toLowerCase())) continue;
     const p = parseResolved(id);
     if (!p) continue;

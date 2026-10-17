@@ -62,13 +62,13 @@ test('the default row is ignored', () => {
   assert.deepEqual(cliModels(), []);
 });
 
-test('Fable is never exposed', () => {
+test('Fable is exposed like any other model; only the default row is dropped', () => {
   setCapabilitiesForTest({ models: MODELS, init: {}, at: 1 });
-  assert.equal(liveCapabilities('claude-fable-5-1', AVAILABLE), null);
-  assert.equal(liveCapabilities('fable', [...AVAILABLE, { id: 'fable' }]), null);
+  assert.ok(liveCapabilities('claude-fable-5-1', AVAILABLE));
+  assert.ok(liveCapabilities('fable', [...AVAILABLE, { id: 'fable' }]));
   const list = cliModels();
   assert.ok(list.length > 0);
-  assert.ok(list.every((m) => !/fable/i.test(m.value + m.resolvedModel)));
+  assert.ok(list.some((m) => /fable/i.test(m.value + m.resolvedModel)));
   assert.ok(list.every((m) => m.value !== 'default'));
   assert.deepEqual(list[0], { value: 'opus', displayName: 'Opus', resolvedModel: 'claude-opus-5-5' });
 });
