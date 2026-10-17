@@ -31,6 +31,11 @@
     "tuning": { "triageEffort": "auto", "advisorEffort": "auto", "planEffort": "auto", "fixEffort": "auto", "prEffort": "auto", "demoEffort": "auto", "replyEffort": "auto", "chatEffort": "auto", "triageThinking": "auto", "advisorThinking": "auto", "planThinking": "auto", "fixThinking": "auto", "prThinking": "auto", "demoThinking": "auto", "replyThinking": "auto", "chatThinking": "auto", "fastMode": false },
     "available": [
       {
+        "id": "fable",
+        "label": "Fable",
+        "hint": "la familia más reciente"
+      },
+      {
         "id": "opus",
         "label": "Opus",
         "hint": "el más capaz — siempre la última versión"
@@ -39,11 +44,6 @@
         "id": "sonnet",
         "label": "Sonnet",
         "hint": "equilibrio calidad/velocidad"
-      },
-      {
-        "id": "fable",
-        "label": "Fable",
-        "hint": "la familia más reciente"
       },
       {
         "id": "haiku",
