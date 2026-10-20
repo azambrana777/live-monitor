@@ -9,7 +9,7 @@ import {
   parseSshGreeting, sshTargetOf, httpsLoginOf, detectGhUser, identityHooks, forgetSshLogins,
 } from '../src/repo-identity.js';
 import { saveProjects, setGhAccount, projectAt, projectOf } from '../src/projects.js';
-import { ghEnvFor, ghEnvAt, ghAccountHooks, forgetGhTokens, identityProblems, assertPushIdentity, ghAccounts } from '../src/gh-account.js';
+import { ghEnvFor, ghEnvAt, ghAccountHooks, forgetGhTokens, identityProblems, identityIssues, assertPushIdentity, ghAccounts } from '../src/gh-account.js';
 import { readyPr, currentLogin, _setGhRunner, forgetRepoCache } from '../src/github.js';
 import { sessionOptions } from '../src/claude.js';
 import { DATA_DIR } from '../src/config.js';
@@ -199,6 +199,14 @@ test('sin user.email local o con un remoto que empuja como otra cuenta, el push 
   assert.match(problems[0], /no local user\.email/);
   assert.match(problems[1], /pushes as mallory, not as alice/);
   await assert.rejects(assertPushIdentity(path.join(`${ALPHA}-wt`, 'feat-1')), (e) => e.code === 'identity_mismatch');
+
+  // Lo mismo como datos, para que la UI lo diga en el idioma de quien lee.
+  const issues = await identityIssues(ALPHA);
+  assert.deepEqual(issues.map(({ message: _m, ...rest }) => rest), [
+    { code: 'no_local_email', login: 'alice', repoPath: ALPHA },
+    { code: 'push_mismatch', login: 'alice', pusher: 'mallory' },
+  ]);
+  assert.deepEqual(issues.map((i) => i.message), problems, 'el mensaje en inglés sigue siendo el de identityProblems');
 });
 
 test('con el correo local y el remoto de la cuenta, el push pasa; un proyecto sin cuenta no se comprueba', async () => {

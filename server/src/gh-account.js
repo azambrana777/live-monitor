@@ -124,19 +124,42 @@ export function ghEnvAt(dir) {
  * @returns {Promise<string[]>}
  */
 export async function identityProblems(dir, project = projectAt(dir)) {
+  return (await identityIssues(dir, project)).map((i) => i.message);
+}
+
+/**
+ * {@link identityProblems} as data, for a client that words them itself (the
+ * board's UI, in the reader's language): `{ code, login, ...details, message }`,
+ * `message` being the English sentence. Codes: `no_local_email` (with
+ * `repoPath`), `push_unverified`, `push_mismatch` (with `pusher`).
+ *
+ * @param {string} dir
+ * @param {import('./keys.js').Project} [project]
+ * @returns {Promise<{code: string, login: string, message: string}[]>}
+ */
+export async function identityIssues(dir, project = projectAt(dir)) {
   const login = project?.ghUser;
   if (!login) return [];
-  const problems = [];
+  const issues = [];
   if (!localEmailOf(dir)) {
-    problems.push(`the repository has no local user.email, so commits would carry the global one: run \`git config user.email <email of ${login}>\` in ${project.repoPath}`);
+    issues.push({
+      code: 'no_local_email', login, repoPath: project.repoPath,
+      message: `the repository has no local user.email, so commits would carry the global one: run \`git config user.email <email of ${login}>\` in ${project.repoPath}`,
+    });
   }
   const pusher = await pushLoginOf(dir);
   if (pusher === null) {
-    problems.push(`\`ssh -T\` to the origin remote did not answer with a GitHub account, so the push could not be checked to go out as ${login}`);
+    issues.push({
+      code: 'push_unverified', login,
+      message: `\`ssh -T\` to the origin remote did not answer with a GitHub account, so the push could not be checked to go out as ${login}`,
+    });
   } else if (pusher !== undefined && pusher.toLowerCase() !== login.toLowerCase()) {
-    problems.push(`the origin remote pushes as ${pusher}, not as ${login}: point it at an SSH host alias whose key belongs to ${login}`);
+    issues.push({
+      code: 'push_mismatch', login, pusher,
+      message: `the origin remote pushes as ${pusher}, not as ${login}: point it at an SSH host alias whose key belongs to ${login}`,
+    });
   }
-  return problems;
+  return issues;
 }
 
 /**

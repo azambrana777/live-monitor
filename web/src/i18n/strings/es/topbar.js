@@ -97,6 +97,12 @@ export default {
     assignee: 'Asignado',
     account: 'Cuenta de GitHub',
     accountActive: 'Cuenta activa de gh',
+    accountWarning: {
+      no_session: 'gh no tiene sesión para la cuenta {login}: ejecuta `gh auth login` y entra como {login}.',
+      no_local_email: 'El repositorio no tiene user.email local y los commits llevarían el global: ejecuta `git config user.email <correo de {login}>` en {repoPath}.',
+      push_unverified: '`ssh -T` al remoto origin no respondió con ninguna cuenta de GitHub: no se puede comprobar que el push salga como {login}.',
+      push_mismatch: 'El remoto origin hace push como {pusher}, no como {login}: apúntalo a un alias SSH cuya clave sea de {login}.',
+    },
     grid: 'Proyectos del tablero',
   },
   settings: {

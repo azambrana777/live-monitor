@@ -3,6 +3,7 @@ import Dialog from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { api } from '../api.js';
 import { useStrings } from '../i18n/useStrings.js';
+import { accountWarningText } from './ManageProjectsDialog.jsx';
 
 /**
  * Importing a project: one obligatory field, the local checkout's path.
@@ -134,7 +135,7 @@ export default function ImportProjectDialog({ onClose, onImported }) {
       const { warnings, ...project } = created?.project ?? created ?? {};
       if (Array.isArray(warnings) && warnings.length) {
         setImported(project);
-        setProblems(warnings.filter((w) => typeof w === 'string'));
+        setProblems(warnings.map((w) => accountWarningText(t, w)).filter(Boolean));
         return;
       }
       onImported(project);

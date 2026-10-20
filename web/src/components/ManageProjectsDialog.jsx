@@ -3,6 +3,18 @@ import Dialog from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { useStrings } from '../i18n/useStrings.js';
 import { api } from '../api.js';
+import { fill } from '../i18n/index.js';
+
+/**
+ * One of the server's account warnings (`{ code, login, ...details, message }`)
+ * in the reader's language; one it has no words for falls back to the
+ * server's own English `message`.
+ */
+export function accountWarningText(t, w) {
+  const template = w && t.topbar.manage.accountWarning[w.code];
+  if (template) return fill(template, w);
+  return typeof w === 'string' ? w : String(w?.message ?? '');
+}
 
 /**
  * Every project the board knows, as a responsive grid of cards: open it,
@@ -115,7 +127,7 @@ export default function ManageProjectsDialog({
                 {notes[x.id]?.error && <p className="pm-account-note" aria-live="polite">{notes[x.id].error}</p>}
                 {notes[x.id]?.warnings?.length > 0 && (
                   <ul className="pm-account-note" aria-live="polite">
-                    {notes[x.id].warnings.map((w, i) => <li key={i}>{w}</li>)}
+                    {notes[x.id].warnings.map((w, i) => <li key={i}>{accountWarningText(t, w)}</li>)}
                   </ul>
                 )}
                 <div className="pm-card-actions">

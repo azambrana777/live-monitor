@@ -28,7 +28,7 @@ import { HOLDER_TAB } from './chattabs.js';
 import { machineOf, machines } from './machine.js';
 import { DEFAULT_PROJECT_ID, coerceKey, keyOf, makeKey, parseKey } from './keys.js';
 import { listProjects, projectOf, saveProjects, configFor, setReviewerChoice, setProjectDesign, setProjectRestricted, removeProject, removedProjectFor, forgetRemovedProject, setGhAccount } from './projects.js';
-import { ghTokenFor, identityProblems, ghAccounts } from './gh-account.js';
+import { ghTokenFor, identityIssues, ghAccounts } from './gh-account.js';
 import { overridesOf, detectProfile, detectDefaultBranch, isProfileId } from './profiles.js';
 import { tuningSnapshot, setTuning } from './tuning.js';
 import { detectRepo, detectGhUser } from './repo-identity.js';
@@ -548,12 +548,20 @@ app.post('/api/projects', async (req, res) => {
   }
 });
 
-/** What stands between a project and working as its GitHub account; empty when nothing does or it declares none. */
+/**
+ * What stands between a project and working as its GitHub account, as
+ * `{ code, login, ...details, message }` (see `identityIssues`) so the UI can
+ * word it in the reader's language; empty when nothing does or it declares none.
+ */
 async function accountWarnings(project) {
   if (!project?.ghUser) return [];
   const out = [];
-  try { ghTokenFor(project.ghUser); } catch (e) { out.push(e.message); }
-  return [...out, ...await identityProblems(project.repoPath, project)];
+  try {
+    ghTokenFor(project.ghUser);
+  } catch (e) {
+    out.push({ code: 'no_session', login: project.ghUser, message: e.message });
+  }
+  return [...out, ...await identityIssues(project.repoPath, project)];
 }
 
 // The accounts a project's `ghUser` can be: the ones `gh` has a session for.
