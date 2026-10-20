@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { run } from './exec.js';
-import { projectOf, projectAt } from './projects.js';
+import { projectOf, projectAt, listProjects } from './projects.js';
 import { pushLoginOf, localEmailOf } from './repo-identity.js';
 
 /**
@@ -40,7 +40,54 @@ export const ghAccountHooks = {
   }),
   // As the board's own process sees it, token included.
   whoami: () => run('gh', ['api', 'user', '--jq', '.login'], { timeoutMs: 15_000 }),
+  // Needs the `user:email` scope; without it GitHub answers 404.
+  emails: (login) => run('gh', ['api', 'user/emails'], { timeoutMs: 15_000, env: { GH_TOKEN: ghTokenFor(login) } }),
 };
+
+/**
+ * What GitHub says about an account's email, per login, for
+ * {@link EMAIL_TTL_MS}: the dialog asks on every opening, and an account's
+ * emails do not move while it is open. A miss (no scope) is cached as null too.
+ */
+const apiEmails = new Map();
+const EMAIL_TTL_MS = 15 * 60 * 1000;
+
+/** Exported for tests only: forgets every cached email. */
+export function forgetGhEmails() { apiEmails.clear(); }
+
+/**
+ * The email a person recognises an account by, or null: its primary email
+ * from GitHub when the token may read it (`user:email`), else the local
+ * `user.email` of a project that already works and pushes as that account —
+ * the address its commits carry here.
+ *
+ * @param {string} login
+ * @returns {Promise<string|null>}
+ */
+async function emailOf(login) {
+  const hit = apiEmails.get(login);
+  let email = hit && Date.now() - hit.at < EMAIL_TTL_MS ? hit.email : undefined;
+  if (email === undefined) {
+    email = null;
+    try {
+      const list = JSON.parse((await ghAccountHooks.emails(login)).stdout);
+      if (Array.isArray(list)) email = (list.find((e) => e?.primary) ?? list.find((e) => e?.verified))?.email ?? null;
+    } catch { /* no scope, no session: fall back below */ }
+    apiEmails.set(login, { email, at: Date.now() });
+  }
+  if (email) return email;
+  for (const p of listProjects()) {
+    if (p.ghUser !== login) continue;
+    // Only a checkout that really pushes as this account vouches for it: one
+    // whose SSH key is somebody else's is misconfigured (its push is refused),
+    // and its email is that other account's. HTTPS (`undefined`) cannot be asked.
+    const pusher = await pushLoginOf(p.repoPath);
+    if (pusher !== undefined && pusher?.toLowerCase() !== login.toLowerCase()) continue;
+    const local = localEmailOf(p.repoPath);
+    if (local) return local;
+  }
+  return null;
+}
 
 /**
  * The account a project without `ghUser` works as: the login of the token the
@@ -65,20 +112,22 @@ export async function defaultGhLogin(accounts) {
 /**
  * The GitHub accounts `gh` has a working session for, the active one marked:
  * what a person can pick as a project's account. Empty when `gh` cannot say
- * (not installed, too old for `--json`, no session at all).
+ * (not installed, too old for `--json`, no session at all). Each one carries
+ * the email a person knows it by (`emailOf`), null when none is known.
  *
- * @returns {Promise<{login: string, active: boolean}[]>}
+ * @returns {Promise<{login: string, active: boolean, email: string|null}[]>}
  */
 export async function ghAccounts() {
+  let logged;
   try {
     const r = await ghAccountHooks.status();
     const hosts = JSON.parse(r.stdout)?.hosts?.['github.com'];
-    return (Array.isArray(hosts) ? hosts : [])
-      .filter((h) => h?.state === 'success' && typeof h.login === 'string')
-      .map((h) => ({ login: h.login, active: h.active === true }));
+    logged = (Array.isArray(hosts) ? hosts : [])
+      .filter((h) => h?.state === 'success' && typeof h.login === 'string');
   } catch {
     return [];
   }
+  return Promise.all(logged.map(async (h) => ({ login: h.login, active: h.active === true, email: await emailOf(h.login) })));
 }
 
 /** Exported for tests only: forgets every cached token. */

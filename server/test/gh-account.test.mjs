@@ -9,7 +9,7 @@ import {
   parseSshGreeting, sshTargetOf, httpsLoginOf, detectGhUser, identityHooks, forgetSshLogins,
 } from '../src/repo-identity.js';
 import { saveProjects, setGhAccount, projectAt, projectOf } from '../src/projects.js';
-import { ghEnvFor, ghEnvAt, ghAccountHooks, forgetGhTokens, identityProblems, identityIssues, assertPushIdentity, ghAccounts, defaultGhLogin } from '../src/gh-account.js';
+import { ghEnvFor, ghEnvAt, ghAccountHooks, forgetGhTokens, identityProblems, identityIssues, assertPushIdentity, ghAccounts, defaultGhLogin, forgetGhEmails } from '../src/gh-account.js';
 import { readyPr, currentLogin, _setGhRunner, forgetRepoCache } from '../src/github.js';
 import { sessionOptions } from '../src/claude.js';
 import { DATA_DIR } from '../src/config.js';
@@ -25,6 +25,7 @@ const entry = (id, repoPath, over = {}) => ({
 
 const realHooks = { ...identityHooks };
 const realToken = ghAccountHooks.token;
+const realEmails = ghAccountHooks.emails;
 let git;      // args -> stdout, o un Error que lanzar
 let sshSeen;  // las líneas de comando que se le pidieron a ssh
 let sshSays;  // lo que ssh imprime
@@ -32,6 +33,8 @@ let sshSays;  // lo que ssh imprime
 beforeEach(() => {
   saveProjects([entry('alpha', ALPHA, { ghUser: 'alice' }), entry('beta', BETA)]);
   forgetGhTokens();
+  forgetGhEmails();
+  ghAccountHooks.emails = async () => ({ ok: false, stdout: '' });
   forgetSshLogins();
   forgetRepoCache();
   git = () => { throw new Error('not set'); };
@@ -49,6 +52,7 @@ beforeEach(() => {
 after(() => {
   Object.assign(identityHooks, realHooks);
   ghAccountHooks.token = realToken;
+  ghAccountHooks.emails = realEmails;
   _setGhRunner();
 });
 
@@ -177,7 +181,33 @@ test('ghAccounts lista las cuentas con sesión en gh, la activa marcada, y nada 
       { state: 'success', active: false, login: 'bob' },
       { state: 'error', active: false, login: 'expired' },
     ], 'ghe.example.com': [{ state: 'success', active: true, login: 'elsewhere' }] } }) });
-    assert.deepEqual(await ghAccounts(), [{ login: 'alice', active: true }, { login: 'bob', active: false }]);
+    // alice: su token puede leer sus correos y gana el principal. bob: sin el
+    // scope (404), sale el user.email local de un proyecto que trabaja como bob.
+    ghAccountHooks.emails = async (login) => ({
+      ok: login === 'alice',
+      stdout: login === 'alice'
+        ? JSON.stringify([{ email: 'old@a.example', primary: false, verified: true }, { email: 'alice@a.example', primary: true, verified: true }])
+        : JSON.stringify({ message: 'Not Found', status: '404' }),
+    });
+    setGhAccount('beta', { ghUser: 'bob' });
+    git = (args) => (args.includes('--local') && args.includes(BETA) ? 'bob@b.example\n' : new Error('unset'));
+    assert.deepEqual(await ghAccounts(), [
+      { login: 'alice', active: true, email: 'alice@a.example' },
+      { login: 'bob', active: false, email: 'bob@b.example' },
+    ]);
+    setGhAccount('beta', { ghUser: null });
+    assert.equal((await ghAccounts())[1].email, null, 'sin scope y sin proyecto que la use, no hay correo');
+
+    // Un proyecto mal configurado no responde por la cuenta: alpha dice ser
+    // bob, pero su remoto empuja como alice, y su correo es el de alice.
+    setGhAccount('alpha', { ghUser: 'bob' });
+    forgetGhEmails();
+    git = (args) => {
+      if (args.includes('get-url')) return 'git@github-alice:acme/alpha.git';
+      if (args.includes('--local')) return 'alice@a.example';
+      return new Error('unset');
+    };
+    assert.equal((await ghAccounts())[1].email, null, 'el correo de un repo que empuja como otra cuenta no cuenta');
     ghAccountHooks.status = async () => ({ ok: false, stdout: '', stderr: 'unknown flag: --json' });
     assert.deepEqual(await ghAccounts(), []);
   } finally {

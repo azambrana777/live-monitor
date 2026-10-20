@@ -3,7 +3,7 @@ import Dialog from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { api } from '../api.js';
 import { useStrings } from '../i18n/useStrings.js';
-import { accountWarningText } from './ManageProjectsDialog.jsx';
+import { accountWarningText, accountLabel } from './ManageProjectsDialog.jsx';
 
 /**
  * Importing a project: one obligatory field, the local checkout's path.
@@ -272,7 +272,7 @@ export default function ImportProjectDialog({ onClose, onImported }) {
           ))}
           {accounts.length > 0 && (
             <datalist id="import-gh-accounts">
-              {accounts.map((a) => <option key={a.login} value={a.login} />)}
+              {accounts.map((a) => <option key={a.login} value={a.login} label={accountLabel(t, a)} />)}
             </datalist>
           )}
         </div>

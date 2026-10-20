@@ -46,9 +46,10 @@ const SAME_AS_ES = {
     'common.languageNames.de', // a language names itself the same way everywhere
     'common.no', // "No" is the same word
     'topbar.settings.hoverSeconds', // «{n} s»: the symbol for seconds is the same everywhere
+    'topbar.manage.accountLabel', // «@{login} — {email}»: a login and an address, no words
   ],
-  fr: ['common.languageNames.es', 'common.languageNames.en', 'common.languageNames.fr', 'common.languageNames.de', 'topbar.settings.hoverSeconds'],
-  de: ['common.languageNames.es', 'common.languageNames.en', 'common.languageNames.fr', 'common.languageNames.de', 'topbar.settings.hoverSeconds'],
+  fr: ['common.languageNames.es', 'common.languageNames.en', 'common.languageNames.fr', 'common.languageNames.de', 'topbar.settings.hoverSeconds', 'topbar.manage.accountLabel'],
+  de: ['common.languageNames.es', 'common.languageNames.en', 'common.languageNames.fr', 'common.languageNames.de', 'topbar.settings.hoverSeconds', 'topbar.manage.accountLabel'],
 };
 
 let fakeLang;

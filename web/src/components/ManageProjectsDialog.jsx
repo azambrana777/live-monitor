@@ -6,6 +6,14 @@ import { api } from '../api.js';
 import { fill } from '../i18n/index.js';
 
 /**
+ * How an account is shown: `@login — email` when the board knows the email it
+ * goes by (a login alone is easy to mix up), else `@login`.
+ */
+export function accountLabel(t, account) {
+  return account.email ? fill(t.topbar.manage.accountLabel, account) : `@${account.login}`;
+}
+
+/**
  * One of the server's account warnings (`{ code, login, ...details, message }`)
  * in the reader's language; one it has no words for falls back to the
  * server's own English `message`.
@@ -19,8 +27,8 @@ export function accountWarningText(t, w) {
 /**
  * Every project the board knows, as a responsive grid of cards: open it,
  * restrict or unrestrict it, change the GitHub account it works as, take it off
- * the board. Importing a new one is the header button. Nothing is confirmed here: `onRemove(project)` belongs to the
- * caller, which asks.
+ * the board. Importing a new one is the header button. Nothing is confirmed
+ * here: `onRemove(project)` belongs to the caller, which asks.
  *
  * @param {object} props
  * @param {object[]} props.projects
@@ -75,10 +83,10 @@ export default function ManageProjectsDialog({
 
   // The project's own account stays offered even when `gh` lost its session:
   // the warning says so, and the select must not pretend it is another one.
-  const accountOptions = (x) => {
-    const logins = accounts.map((a) => a.login);
-    return x.ghUser && !logins.includes(x.ghUser) ? [...logins, x.ghUser] : logins;
-  };
+  const accountOptions = (x) => (x.ghUser && !accounts.some((a) => a.login === x.ghUser)
+    ? [...accounts, { login: x.ghUser, email: null }]
+    : accounts);
+  const currentAccount = current ? accounts.find((a) => a.login === current) ?? { login: current, email: null } : null;
 
   return (
     <Dialog
@@ -123,8 +131,8 @@ export default function ManageProjectsDialog({
                         value={x.ghUser ?? ''} disabled={notes[x.id]?.busy}
                         onChange={(e) => changeAccount(x, e.target.value)}
                       >
-                        <option value="">{current ? fill(m.accountActiveIs, { login: current }) : m.accountActive}</option>
-                        {accountOptions(x).map((login) => <option key={login} value={login}>@{login}</option>)}
+                        <option value="">{currentAccount ? fill(m.accountActiveIs, { account: accountLabel(t, currentAccount) }) : m.accountActive}</option>
+                        {accountOptions(x).map((a) => <option key={a.login} value={a.login}>{accountLabel(t, a)}</option>)}
                       </select>
                     </dd>
                   </div>
