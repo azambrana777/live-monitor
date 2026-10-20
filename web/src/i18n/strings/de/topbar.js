@@ -93,6 +93,7 @@ export default {
     path: 'Pfad',
     assignee: 'Zugewiesen',
     account: 'GitHub-Konto',
+    accountActive: 'Aktives gh-Konto',
     grid: 'Projekte des Boards',
   },
   settings: {

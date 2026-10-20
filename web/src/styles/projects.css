@@ -133,6 +133,22 @@
 .pm-field { display: flex; gap: 8px; min-width: 0; font-size: var(--fs-sm); }
 .pm-field dt { flex: none; width: 76px; color: var(--muted); }
 .pm-field dd { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-account {
+  width: 100%;
+  min-width: 0;
+  height: var(--h-sm);
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-ctl);
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+.pm-account:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pm-account-note { margin: 0; padding-left: 16px; font-size: var(--fs-xs); color: var(--warn-fg); overflow-wrap: anywhere; }
+p.pm-account-note { padding-left: 0; color: var(--danger-fg); }
 .pm-card-actions { display: flex; gap: 6px; margin-top: auto; }
 .pm-card-actions .btn:first-child { flex: 1; }
 .pm-danger:hover { color: var(--danger-fg); }

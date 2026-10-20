@@ -93,6 +93,7 @@ export default {
     path: 'Chemin',
     assignee: 'Assigné',
     account: 'Compte GitHub',
+    accountActive: 'Compte gh actif',
     grid: 'Projets du tableau',
   },
   settings: {

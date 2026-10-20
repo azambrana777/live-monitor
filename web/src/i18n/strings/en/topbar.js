@@ -93,6 +93,7 @@ export default {
     path: 'Path',
     assignee: 'Assignee',
     account: 'GitHub account',
+    accountActive: 'Active gh account',
     grid: 'Board projects',
   },
   settings: {

@@ -2,11 +2,12 @@ import React from 'react';
 import Dialog from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { useStrings } from '../i18n/useStrings.js';
+import { api } from '../api.js';
 
 /**
  * Every project the board knows, as a responsive grid of cards: open it,
- * restrict or unrestrict it, take it off the board. Importing a new one is the
- * header button. Nothing is confirmed here: `onRemove(project)` belongs to the
+ * restrict or unrestrict it, change the GitHub account it works as, take it off
+ * the board. Importing a new one is the header button. Nothing is confirmed here: `onRemove(project)` belongs to the
  * caller, which asks.
  *
  * @param {object} props
@@ -31,6 +32,36 @@ export default function ManageProjectsDialog({
       <dd title={value}>{value}</dd>
     </div>
   ) : null);
+
+  // The accounts `gh` has a session for, asked once per opening. Per card, what
+  // the last change answered: still saving, its warnings, or its refusal.
+  const [accounts, setAccounts] = React.useState([]);
+  const [notes, setNotes] = React.useState({});
+  React.useEffect(() => {
+    api.ghAccounts().then((r) => setAccounts(Array.isArray(r?.accounts) ? r.accounts : []), () => {});
+  }, []);
+  const note = (id, value) => setNotes((n) => ({ ...n, [id]: value }));
+
+  const changeAccount = async (x, login) => {
+    const ghUser = login || null;
+    // The assignee follows the account when it was the account (or nobody);
+    // one picked by hand stays.
+    const follows = ghUser && (!x.assignee || x.assignee === x.ghUser);
+    note(x.id, { busy: true });
+    try {
+      const saved = await api.setProjectGhAccount(x.id, ghUser, follows ? ghUser : undefined);
+      note(x.id, { warnings: Array.isArray(saved?.warnings) ? saved.warnings : [] });
+    } catch (e) {
+      note(x.id, { error: e.message });
+    }
+  };
+
+  // The project's own account stays offered even when `gh` lost its session:
+  // the warning says so, and the select must not pretend it is another one.
+  const accountOptions = (x) => {
+    const logins = accounts.map((a) => a.login);
+    return x.ghUser && !logins.includes(x.ghUser) ? [...logins, x.ghUser] : logins;
+  };
 
   return (
     <Dialog
@@ -67,8 +98,26 @@ export default function ManageProjectsDialog({
                   {field(m.repo, x.repo)}
                   {field(m.path, x.repoPath)}
                   {field(m.assignee, x.assignee ? `@${x.assignee}` : '')}
-                  {field(m.account, x.ghUser ? `@${x.ghUser}` : '')}
+                  <div className="pm-field">
+                    <dt>{m.account}</dt>
+                    <dd>
+                      <select
+                        className="pm-account" aria-label={`${m.account}: ${name}`}
+                        value={x.ghUser ?? ''} disabled={notes[x.id]?.busy}
+                        onChange={(e) => changeAccount(x, e.target.value)}
+                      >
+                        <option value="">{m.accountActive}</option>
+                        {accountOptions(x).map((login) => <option key={login} value={login}>@{login}</option>)}
+                      </select>
+                    </dd>
+                  </div>
                 </dl>
+                {notes[x.id]?.error && <p className="pm-account-note" aria-live="polite">{notes[x.id].error}</p>}
+                {notes[x.id]?.warnings?.length > 0 && (
+                  <ul className="pm-account-note" aria-live="polite">
+                    {notes[x.id].warnings.map((w, i) => <li key={i}>{w}</li>)}
+                  </ul>
+                )}
                 <div className="pm-card-actions">
                   <button type="button" className="btn btn-md" onClick={() => { onSelect?.(x.id); onClose?.(); }}>
                     <Icon name="folder-git"/> {m.open}

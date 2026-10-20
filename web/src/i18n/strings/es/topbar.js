@@ -96,6 +96,7 @@ export default {
     path: 'Ruta',
     assignee: 'Asignado',
     account: 'Cuenta de GitHub',
+    accountActive: 'Cuenta activa de gh',
     grid: 'Proyectos del tablero',
   },
   settings: {

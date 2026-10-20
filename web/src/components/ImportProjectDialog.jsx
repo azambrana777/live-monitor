@@ -80,6 +80,16 @@ export default function ImportProjectDialog({ onClose, onImported }) {
     );
   }, []);
 
+  // The accounts `gh` has a session for, offered as suggestions for the
+  // project's account; the field still takes any login.
+  const [accounts, setAccounts] = useState([]);
+  React.useEffect(() => {
+    api.ghAccounts().then(
+      (r) => { if (alive.current && Array.isArray(r?.accounts)) setAccounts(r.accounts); },
+      () => {},
+    );
+  }, []);
+
   const path = repoPath.trim();
   const set = (field, value) => setAnswers((a) => ({ ...a, [field]: value }));
 
@@ -251,6 +261,7 @@ export default function ImportProjectDialog({ onClose, onImported }) {
               <input
                 className={`import-input ${askedFields.includes(field) ? 'is-asked' : ''}`}
                 spellCheck={false}
+                list={field === 'ghUser' && accounts.length ? 'import-gh-accounts' : undefined}
                 value={answers[field] ?? ''}
                 onChange={(e) => set(field, e.target.value)}
                 placeholder={askedFields.includes(field) ? t.topbar.importProject.couldNotDeduce : t.topbar.importProject.deduces}
@@ -258,6 +269,11 @@ export default function ImportProjectDialog({ onClose, onImported }) {
               {hint && <span className="import-field-hint">{hint}</span>}
             </label>
           ))}
+          {accounts.length > 0 && (
+            <datalist id="import-gh-accounts">
+              {accounts.map((a) => <option key={a.login} value={a.login} />)}
+            </datalist>
+          )}
         </div>
       )}
 

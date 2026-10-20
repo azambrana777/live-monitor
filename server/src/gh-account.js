@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { run } from './exec.js';
 import { projectOf, projectAt } from './projects.js';
 import { pushLoginOf, localEmailOf } from './repo-identity.js';
 
@@ -32,7 +33,31 @@ export const ghAccountHooks = {
   token: (login) => execFileSync('gh', ['auth', 'token', '-u', login], {
     encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   }).trim(),
+  // Without GH_TOKEN/GITHUB_TOKEN: with either set, `gh auth status` reports
+  // that one token instead of the accounts in the keyring.
+  status: () => run('gh', ['auth', 'status', '--json', 'hosts'], {
+    timeoutMs: 15_000, env: { GH_TOKEN: undefined, GITHUB_TOKEN: undefined },
+  }),
 };
+
+/**
+ * The GitHub accounts `gh` has a working session for, the active one marked:
+ * what a person can pick as a project's account. Empty when `gh` cannot say
+ * (not installed, too old for `--json`, no session at all).
+ *
+ * @returns {Promise<{login: string, active: boolean}[]>}
+ */
+export async function ghAccounts() {
+  try {
+    const r = await ghAccountHooks.status();
+    const hosts = JSON.parse(r.stdout)?.hosts?.['github.com'];
+    return (Array.isArray(hosts) ? hosts : [])
+      .filter((h) => h?.state === 'success' && typeof h.login === 'string')
+      .map((h) => ({ login: h.login, active: h.active === true }));
+  } catch {
+    return [];
+  }
+}
 
 /** Exported for tests only: forgets every cached token. */
 export function forgetGhTokens() { tokens.clear(); }

@@ -28,7 +28,7 @@ import { HOLDER_TAB } from './chattabs.js';
 import { machineOf, machines } from './machine.js';
 import { DEFAULT_PROJECT_ID, coerceKey, keyOf, makeKey, parseKey } from './keys.js';
 import { listProjects, projectOf, saveProjects, configFor, setReviewerChoice, setProjectDesign, setProjectRestricted, removeProject, removedProjectFor, forgetRemovedProject, setGhAccount } from './projects.js';
-import { ghTokenFor, identityProblems } from './gh-account.js';
+import { ghTokenFor, identityProblems, ghAccounts } from './gh-account.js';
 import { overridesOf, detectProfile, detectDefaultBranch, isProfileId } from './profiles.js';
 import { tuningSnapshot, setTuning } from './tuning.js';
 import { detectRepo, detectGhUser } from './repo-identity.js';
@@ -555,6 +555,9 @@ async function accountWarnings(project) {
   try { ghTokenFor(project.ghUser); } catch (e) { out.push(e.message); }
   return [...out, ...await identityProblems(project.repoPath, project)];
 }
+
+// The accounts a project's `ghUser` can be: the ones `gh` has a session for.
+app.get('/api/gh-accounts', async (_req, res) => res.json({ accounts: await ghAccounts() }));
 
 // The project's GitHub account (`ghUser: null` goes back to the active `gh`
 // account) and, when given, its assignee. 404 unknown project, 400 bad login.

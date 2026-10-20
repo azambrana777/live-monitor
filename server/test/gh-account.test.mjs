@@ -9,7 +9,7 @@ import {
   parseSshGreeting, sshTargetOf, httpsLoginOf, detectGhUser, identityHooks, forgetSshLogins,
 } from '../src/repo-identity.js';
 import { saveProjects, setGhAccount, projectAt, projectOf } from '../src/projects.js';
-import { ghEnvFor, ghEnvAt, ghAccountHooks, forgetGhTokens, identityProblems, assertPushIdentity } from '../src/gh-account.js';
+import { ghEnvFor, ghEnvAt, ghAccountHooks, forgetGhTokens, identityProblems, assertPushIdentity, ghAccounts } from '../src/gh-account.js';
 import { readyPr, currentLogin, _setGhRunner, forgetRepoCache } from '../src/github.js';
 import { sessionOptions } from '../src/claude.js';
 import { DATA_DIR } from '../src/config.js';
@@ -167,6 +167,22 @@ test('una sesión de agente en un worktree del proyecto recibe su GH_TOKEN; en u
   assert.equal(sessionOptions({ cwd: wt, model: 'm', machine: { kind: 'local', name: 'local' } }).env.GH_TOKEN, 'gho_alice');
   const remote = sessionOptions({ cwd: wt, model: 'm', machine: { kind: 'runner', name: 'box' } }).env.GH_TOKEN;
   assert.equal(remote, process.env.GH_TOKEN, 'un runner no recibe los tokens de esta máquina');
+});
+
+test('ghAccounts lista las cuentas con sesión en gh, la activa marcada, y nada si gh no sabe decirlo', async () => {
+  const realStatus = ghAccountHooks.status;
+  try {
+    ghAccountHooks.status = async () => ({ ok: true, stdout: JSON.stringify({ hosts: { 'github.com': [
+      { state: 'success', active: true, login: 'alice' },
+      { state: 'success', active: false, login: 'bob' },
+      { state: 'error', active: false, login: 'expired' },
+    ], 'ghe.example.com': [{ state: 'success', active: true, login: 'elsewhere' }] } }) });
+    assert.deepEqual(await ghAccounts(), [{ login: 'alice', active: true }, { login: 'bob', active: false }]);
+    ghAccountHooks.status = async () => ({ ok: false, stdout: '', stderr: 'unknown flag: --json' });
+    assert.deepEqual(await ghAccounts(), []);
+  } finally {
+    ghAccountHooks.status = realStatus;
+  }
 });
 
 // --- la verificación antes del push ----------------------------------------
