@@ -208,6 +208,21 @@ test('ghAccounts lista las cuentas con sesión en gh, la activa marcada, y nada 
       return new Error('unset');
     };
     assert.equal((await ghAccounts())[1].email, null, 'el correo de un repo que empuja como otra cuenta no cuenta');
+
+    // Primera importación: ningún proyecto usa todavía la cuenta, pero el
+    // checkout que se importa empuja como alice y firma con su correo.
+    setGhAccount('alpha', { ghUser: null });
+    ghAccountHooks.emails = async () => ({ ok: false, stdout: '' });
+    forgetGhEmails();
+    const fresh = path.join(ROOT, 'fresh');
+    git = (args) => {
+      if (args.includes(fresh) && args.includes('get-url')) return 'git@github-alice:acme/fresh.git';
+      if (args.includes(fresh) && args.includes('--local')) return 'alice@fresh.example';
+      return new Error('unset');
+    };
+    assert.equal((await ghAccounts())[0].email, null, 'sin el checkout, nada lo dice');
+    assert.equal((await ghAccounts(fresh))[0].email, 'alice@fresh.example');
+    assert.equal((await ghAccounts(fresh))[1].email, null, 'y no se lo presta a otra cuenta');
     ghAccountHooks.status = async () => ({ ok: false, stdout: '', stderr: 'unknown flag: --json' });
     assert.deepEqual(await ghAccounts(), []);
   } finally {

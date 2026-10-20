@@ -81,17 +81,24 @@ export default function ImportProjectDialog({ onClose, onImported }) {
     );
   }, []);
 
+  const path = repoPath.trim();
+
   // The accounts `gh` has a session for, offered as suggestions for the
-  // project's account; the field still takes any login.
+  // project's account; the field still takes any login. Asked with the path
+  // typed so far, since that checkout's own email names the account it pushes
+  // as — on a first import it is the only place that email is known. Only
+  // while the fields are shown, and once the typing pauses.
   const [accounts, setAccounts] = useState([]);
   React.useEffect(() => {
-    api.ghAccounts().then(
-      (r) => { if (alive.current && Array.isArray(r?.accounts)) setAccounts(r.accounts); },
-      () => {},
-    );
-  }, []);
-
-  const path = repoPath.trim();
+    if (!open) return undefined;
+    const timer = setTimeout(() => {
+      api.ghAccounts(path || null).then(
+        (r) => { if (alive.current && Array.isArray(r?.accounts)) setAccounts(r.accounts); },
+        () => {},
+      );
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [open, path]);
   const set = (field, value) => setAnswers((a) => ({ ...a, [field]: value }));
 
   // Navigating by the `path` the server gave for that entry — never by

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { run } from './exec.js';
 import { projectOf, projectAt, listProjects } from './projects.js';
-import { pushLoginOf, localEmailOf } from './repo-identity.js';
+import { pushLoginOf, localEmailOf, detectGhUser } from './repo-identity.js';
 
 /**
  * The GitHub account a project works as, turned into what a process needs.
@@ -57,25 +57,39 @@ export function forgetGhEmails() { apiEmails.clear(); }
 
 /**
  * The email a person recognises an account by, or null: its primary email
- * from GitHub when the token may read it (`user:email`), else the local
- * `user.email` of a project that already works and pushes as that account —
- * the address its commits carry here.
+ * from GitHub when the token may read it, else the address its commits carry
+ * in the checkout being imported or in a project here.
  *
  * @param {string} login
+ * @param {string|null} [checkout] a checkout not registered yet (the import dialog's).
  * @returns {Promise<string|null>}
  */
-async function emailOf(login) {
+async function emailOf(login, checkout) {
+  return (await githubEmailOf(login)) || (await checkoutEmailFor(login, checkout)) || localEmailFor(login);
+}
+
+/** The local `user.email` of `checkout` when its remote works as `login`, or null. */
+async function checkoutEmailFor(login, checkout) {
+  if (!checkout) return null;
+  const account = await detectGhUser(checkout);
+  return account?.toLowerCase() === login.toLowerCase() ? localEmailOf(checkout) : null;
+}
+
+/** The primary (else a verified) email GitHub reports, cached; null without the `user:email` scope. */
+async function githubEmailOf(login) {
   const hit = apiEmails.get(login);
-  let email = hit && Date.now() - hit.at < EMAIL_TTL_MS ? hit.email : undefined;
-  if (email === undefined) {
-    email = null;
-    try {
-      const list = JSON.parse((await ghAccountHooks.emails(login)).stdout);
-      if (Array.isArray(list)) email = (list.find((e) => e?.primary) ?? list.find((e) => e?.verified))?.email ?? null;
-    } catch { /* no scope, no session: fall back below */ }
-    apiEmails.set(login, { email, at: Date.now() });
-  }
-  if (email) return email;
+  if (hit && Date.now() - hit.at < EMAIL_TTL_MS) return hit.email;
+  let email = null;
+  try {
+    const list = JSON.parse((await ghAccountHooks.emails(login)).stdout);
+    if (Array.isArray(list)) email = (list.find((e) => e?.primary) ?? list.find((e) => e?.verified))?.email ?? null;
+  } catch { /* no scope, no session: no email */ }
+  apiEmails.set(login, { email, at: Date.now() });
+  return email;
+}
+
+/** The local `user.email` of a project that works and pushes as `login`, or null. */
+async function localEmailFor(login) {
   for (const p of listProjects()) {
     if (p.ghUser !== login) continue;
     // Only a checkout that really pushes as this account vouches for it: one
@@ -115,9 +129,11 @@ export async function defaultGhLogin(accounts) {
  * (not installed, too old for `--json`, no session at all). Each one carries
  * the email a person knows it by (`emailOf`), null when none is known.
  *
+ * @param {string|null} [checkout] a checkout about to be imported, whose own
+ *   `user.email` names the account its remote works as.
  * @returns {Promise<{login: string, active: boolean, email: string|null}[]>}
  */
-export async function ghAccounts() {
+export async function ghAccounts(checkout = null) {
   let logged;
   try {
     const r = await ghAccountHooks.status();
@@ -127,7 +143,7 @@ export async function ghAccounts() {
   } catch {
     return [];
   }
-  return Promise.all(logged.map(async (h) => ({ login: h.login, active: h.active === true, email: await emailOf(h.login) })));
+  return Promise.all(logged.map(async (h) => ({ login: h.login, active: h.active === true, email: await emailOf(h.login, checkout) })));
 }
 
 /** Exported for tests only: forgets every cached token. */

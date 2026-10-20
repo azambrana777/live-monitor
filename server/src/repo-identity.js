@@ -125,25 +125,6 @@ async function sshLogin(repoPath, { user, host, port }) {
 export function forgetSshLogins() { sshLoginCache.clear(); }
 
 /**
- * The GitHub account a checkout works as, read from its `origin`: the login
- * an HTTPS URL carries, else the account `ssh -T` reports for an SSH remote.
- * Null when neither answers. Never rejects.
- */
-export async function detectGhUser(repoPath) {
-  const url = originUrl(repoPath);
-  if (!url) return null;
-  const fromHttps = httpsLoginOf(url);
-  if (fromHttps) return fromHttps;
-  const target = sshTargetOf(url);
-  if (!target) return null;
-  try {
-    return await sshLogin(repoPath, target);
-  } catch {
-    return null;
-  }
-}
-
-/**
  * The account a push of this checkout goes out as, when that can be known:
  * the `ssh -T` login for an SSH remote, `undefined` for any other remote (an
  * HTTPS push authenticates through git's credential helper, which this does
@@ -158,6 +139,15 @@ export async function pushLoginOf(repoPath) {
   } catch {
     return null;
   }
+}
+
+/**
+ * The GitHub account a checkout works as, read from its `origin`: the login
+ * an HTTPS URL carries, else the account its SSH key pushes as. Null when
+ * neither answers. Never rejects.
+ */
+export async function detectGhUser(repoPath) {
+  return httpsLoginOf(originUrl(repoPath)) ?? (await pushLoginOf(repoPath)) ?? null;
 }
 
 /** The repository's own `user.email` (`--local`), or null when it only has the global one. */

@@ -565,9 +565,10 @@ async function accountWarnings(project) {
 }
 
 // The accounts a project's `ghUser` can be: the ones `gh` has a session for,
-// plus `current`, the one a project without `ghUser` works as.
-app.get('/api/gh-accounts', async (_req, res) => {
-  const accounts = await ghAccounts();
+// plus `current`, the one a project without `ghUser` works as. `?repoPath=`
+// (the import dialog's checkout) lets that checkout name its account's email.
+app.get('/api/gh-accounts', async (req, res) => {
+  const accounts = await ghAccounts(pickText(req.query.repoPath));
   res.json({ accounts, current: await defaultGhLogin(accounts) });
 });
 
@@ -582,7 +583,7 @@ app.post('/api/projects/:project/gh-account', async (req, res) => {
   }
   try {
     const saved = setGhAccount(req.params.project, {
-      ghUser: body.ghUser === null ? null : pickText(body.ghUser) ?? null,
+      ghUser: pickText(body.ghUser),
       assignee: pickText(body.assignee) ?? undefined,
     });
     broadcast({ type: 'snapshot', ...snapshot() });

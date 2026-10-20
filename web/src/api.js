@@ -159,7 +159,7 @@ export const api = {
   removeProject: (id) => send(`/api/projects/${encodeURIComponent(id)}`, undefined, 'DELETE'),
   // The GitHub accounts `gh` has a session for, and the one a project works
   // as (`null`: the active account). The answer may carry `warnings`.
-  ghAccounts: () => get('/api/gh-accounts'),
+  ghAccounts: (repoPath = null) => get(`/api/gh-accounts${repoPath ? `?repoPath=${encodeURIComponent(repoPath)}` : ''}`),
   setProjectGhAccount: (id, ghUser, assignee) => send(`/api/projects/${encodeURIComponent(id)}/gh-account`, {
     ghUser, ...(assignee ? { assignee } : {}),
   }),
