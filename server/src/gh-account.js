@@ -38,7 +38,29 @@ export const ghAccountHooks = {
   status: () => run('gh', ['auth', 'status', '--json', 'hosts'], {
     timeoutMs: 15_000, env: { GH_TOKEN: undefined, GITHUB_TOKEN: undefined },
   }),
+  // As the board's own process sees it, token included.
+  whoami: () => run('gh', ['api', 'user', '--jq', '.login'], { timeoutMs: 15_000 }),
 };
+
+/**
+ * The account a project without `ghUser` works as: the login of the token the
+ * board was started with (`GH_TOKEN`/`GITHUB_TOKEN`, which wins over the
+ * keyring), else the active keyring account. Null when it cannot be told.
+ *
+ * @param {{login: string, active: boolean}[]} accounts what {@link ghAccounts} answered.
+ * @returns {Promise<string|null>}
+ */
+export async function defaultGhLogin(accounts) {
+  if (!process.env.GH_TOKEN && !process.env.GITHUB_TOKEN) {
+    return accounts.find((a) => a.active)?.login ?? null;
+  }
+  try {
+    const r = await ghAccountHooks.whoami();
+    return (r.ok && r.stdout.trim()) || null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The GitHub accounts `gh` has a working session for, the active one marked:

@@ -48,9 +48,14 @@ export default function ManageProjectsDialog({
   // The accounts `gh` has a session for, asked once per opening. Per card, what
   // the last change answered: still saving, its warnings, or its refusal.
   const [accounts, setAccounts] = React.useState([]);
+  // The login a project without its own account works as, named on that option.
+  const [current, setCurrent] = React.useState(null);
   const [notes, setNotes] = React.useState({});
   React.useEffect(() => {
-    api.ghAccounts().then((r) => setAccounts(Array.isArray(r?.accounts) ? r.accounts : []), () => {});
+    api.ghAccounts().then((r) => {
+      setAccounts(Array.isArray(r?.accounts) ? r.accounts : []);
+      setCurrent(typeof r?.current === 'string' ? r.current : null);
+    }, () => {});
   }, []);
   const note = (id, value) => setNotes((n) => ({ ...n, [id]: value }));
 
@@ -118,7 +123,7 @@ export default function ManageProjectsDialog({
                         value={x.ghUser ?? ''} disabled={notes[x.id]?.busy}
                         onChange={(e) => changeAccount(x, e.target.value)}
                       >
-                        <option value="">{m.accountActive}</option>
+                        <option value="">{current ? fill(m.accountActiveIs, { login: current }) : m.accountActive}</option>
                         {accountOptions(x).map((login) => <option key={login} value={login}>@{login}</option>)}
                       </select>
                     </dd>

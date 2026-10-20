@@ -94,6 +94,7 @@ export default {
     assignee: 'Assigné',
     account: 'Compte GitHub',
     accountActive: 'Compte gh actif',
+    accountActiveIs: 'Compte gh actif (@{login})',
     accountWarning: {
       no_session: 'gh n’a pas de session pour le compte {login} : lancez `gh auth login` et connectez-vous en tant que {login}.',
       no_local_email: 'Le dépôt n’a pas de user.email local, les commits porteraient le global : lancez `git config user.email <e-mail de {login}>` dans {repoPath}.',

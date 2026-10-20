@@ -9,7 +9,7 @@ import {
   parseSshGreeting, sshTargetOf, httpsLoginOf, detectGhUser, identityHooks, forgetSshLogins,
 } from '../src/repo-identity.js';
 import { saveProjects, setGhAccount, projectAt, projectOf } from '../src/projects.js';
-import { ghEnvFor, ghEnvAt, ghAccountHooks, forgetGhTokens, identityProblems, identityIssues, assertPushIdentity, ghAccounts } from '../src/gh-account.js';
+import { ghEnvFor, ghEnvAt, ghAccountHooks, forgetGhTokens, identityProblems, identityIssues, assertPushIdentity, ghAccounts, defaultGhLogin } from '../src/gh-account.js';
 import { readyPr, currentLogin, _setGhRunner, forgetRepoCache } from '../src/github.js';
 import { sessionOptions } from '../src/claude.js';
 import { DATA_DIR } from '../src/config.js';
@@ -182,6 +182,25 @@ test('ghAccounts lista las cuentas con sesión en gh, la activa marcada, y nada 
     assert.deepEqual(await ghAccounts(), []);
   } finally {
     ghAccountHooks.status = realStatus;
+  }
+});
+
+test('la cuenta por defecto es la activa del keyring, o la del GH_TOKEN con que arrancó el tablero', async () => {
+  const accounts = [{ login: 'alice', active: false }, { login: 'bob', active: true }];
+  const realWhoami = ghAccountHooks.whoami;
+  const had = process.env.GH_TOKEN;
+  try {
+    delete process.env.GH_TOKEN;
+    assert.equal(await defaultGhLogin(accounts), 'bob');
+    process.env.GH_TOKEN = 'gho_x';
+    ghAccountHooks.whoami = async () => ({ ok: true, stdout: 'alice\n' });
+    assert.equal(await defaultGhLogin(accounts), 'alice', 'el token gana al keyring, como en gh');
+    ghAccountHooks.whoami = async () => ({ ok: false, stdout: '' });
+    assert.equal(await defaultGhLogin(accounts), null);
+  } finally {
+    ghAccountHooks.whoami = realWhoami;
+    if (had === undefined) delete process.env.GH_TOKEN;
+    else process.env.GH_TOKEN = had;
   }
 });
 
