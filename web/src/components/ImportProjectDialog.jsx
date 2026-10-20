@@ -19,7 +19,7 @@ import { useStrings } from '../i18n/useStrings.js';
  */
 
 /** The parts of a `Project` a person can answer for. `repoPath` is the field above. Labels and hints are in the catalog. */
-const OPTIONAL = ['id', 'name', 'repo', 'worktreeRoot', 'assignee', 'reviewer'];
+const OPTIONAL = ['id', 'name', 'repo', 'worktreeRoot', 'ghUser', 'assignee', 'reviewer'];
 
 /**
  * What the server says it still needs, whichever way it says it: a list of
@@ -56,6 +56,9 @@ export default function ImportProjectDialog({ onClose, onImported }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);       // the server's own words
   const [problems, setProblems] = useState([]);   // a list, when it sent one
+  // Imported, but with what stands between it and its GitHub account (no gh
+  // session, a remote that pushes as somebody else): shown before closing.
+  const [imported, setImported] = useState(null);
   // The folder browser, offered only where the board itself runs. `here` is
   // the listing being shown: `{ path, parent, entries, truncated }`.
   const [canBrowse, setCanBrowse] = useState(false);
@@ -106,7 +109,7 @@ export default function ImportProjectDialog({ onClose, onImported }) {
   };
 
   const submit = async () => {
-    if (!path || busy) return;
+    if (!path || busy || imported) return;
     setBusy(true);
     setError(null);
     setProblems([]);
@@ -118,7 +121,13 @@ export default function ImportProjectDialog({ onClose, onImported }) {
       }
       const created = await api.createProject(body);
       if (!alive.current) return;
-      onImported(created?.project ?? created);
+      const { warnings, ...project } = created?.project ?? created ?? {};
+      if (Array.isArray(warnings) && warnings.length) {
+        setImported(project);
+        setProblems(warnings.filter((w) => typeof w === 'string'));
+        return;
+      }
+      onImported(project);
     } catch (e) {
       if (!alive.current) return;
       setError(e.message);
@@ -151,10 +160,16 @@ export default function ImportProjectDialog({ onClose, onImported }) {
         <>
           <span className="modal-caption">{t.topbar.importProject.footerNote}</span>
           <span className="modal-spacer" />
-          <button className="btn btn-ghost btn-md" onClick={onClose} disabled={busy}>{t.topbar.importProject.leave}</button>
-          <button className="btn btn-primary btn-md" disabled={!path || busy} onClick={submit}>
-            {busy ? t.topbar.importProject.submitting : t.topbar.importProject.submit}
-          </button>
+          {imported ? (
+            <button className="btn btn-primary btn-md" onClick={() => onImported(imported)}>{t.topbar.importProject.understood}</button>
+          ) : (
+            <>
+              <button className="btn btn-ghost btn-md" onClick={onClose} disabled={busy}>{t.topbar.importProject.leave}</button>
+              <button className="btn btn-primary btn-md" disabled={!path || busy} onClick={submit}>
+                {busy ? t.topbar.importProject.submitting : t.topbar.importProject.submit}
+              </button>
+            </>
+          )}
         </>
       )}
     >
@@ -247,6 +262,7 @@ export default function ImportProjectDialog({ onClose, onImported }) {
       )}
 
       {error && <p className="import-error" aria-live="polite">{error}</p>}
+      {imported && <p className="import-error" aria-live="polite">{t.topbar.importProject.warnings}</p>}
       {problems.length > 0 && (
         <ul className="import-problems">
           {problems.map((p, i) => <li key={i}>{p}</li>)}

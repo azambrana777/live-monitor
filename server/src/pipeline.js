@@ -87,6 +87,7 @@ import { withRetries, isTransient, lastLines, BACKOFF_MS } from './retry.js';
 import { begin as beginSpan, end as endSpan, span, record as recordSpan, openPhaseOf, metricsHooks } from './metrics.js';
 import { DEFAULT_PROJECT_ID, coerceKey, keyOf, makeKey } from './keys.js';
 import { configFor, projectOf, baseBranchOf, projectDesignOf, rememberReviewer, setReviewer, setNoReviewer, setBaseBranch, LOGIN_RE } from './projects.js';
+import { identityProblems } from './gh-account.js';
 import { projectContextFor } from './project-context.js';
 import { tuningFor } from './tuning.js';
 import { normalizeEffort, clampEffort, thinkingModesFor, THINKING_BUDGET } from './effort.js';
@@ -1417,6 +1418,14 @@ async function bootstrapOnce(task, machine, base) {
   if (!tracked.ok) throw failure('Could not read the index', tracked);
   if (tracked.stdout.trim()) {
     throw bootstrapError(409, 'index_not_clean', 'The repository index has staged files: the initial commit would include them. Make the initial commit by hand.');
+  }
+  // Committed and pushed as the project's GitHub account, or not at all
+  // (`gh-account.js`). Only a local checkout can be asked.
+  if (machine.kind === 'local') {
+    const problems = await identityProblems(repo);
+    if (problems.length) {
+      throw bootstrapError(409, 'identity_mismatch', `The initial commit would not go out as the project's GitHub account: ${problems.join('; ')}`);
+    }
   }
 
   const ref = `refs/heads/${base}`;

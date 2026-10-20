@@ -27,10 +27,11 @@ import { registerIssueDraftRoutes } from './issuedraft.js';
 import { HOLDER_TAB } from './chattabs.js';
 import { machineOf, machines } from './machine.js';
 import { DEFAULT_PROJECT_ID, coerceKey, keyOf, makeKey, parseKey } from './keys.js';
-import { listProjects, projectOf, saveProjects, configFor, setReviewerChoice, setProjectDesign, setProjectRestricted, removeProject, removedProjectFor, forgetRemovedProject } from './projects.js';
+import { listProjects, projectOf, saveProjects, configFor, setReviewerChoice, setProjectDesign, setProjectRestricted, removeProject, removedProjectFor, forgetRemovedProject, setGhAccount } from './projects.js';
+import { ghTokenFor, identityProblems } from './gh-account.js';
 import { overridesOf, detectProfile, detectDefaultBranch, isProfileId } from './profiles.js';
 import { tuningSnapshot, setTuning } from './tuning.js';
-import { detectRepo } from './repo-identity.js';
+import { detectRepo, detectGhUser } from './repo-identity.js';
 import { movePreflight, moveTask, retryMove, discardMove, removePlace } from './move.js';
 import { resolvedModels } from './models.js';
 import { listAssignedIssues, repoLabels, issueOrPrRef, searchRepoUsers } from './github.js';
@@ -471,8 +472,15 @@ app.get('/api/projects/:project/tasks', (req, res) => {
  * convention gives `worktreeRoot` (`<checkout>-wt`), the last path segment
  * gives the id. 400 carries the registry's own refusal, word for word: it is
  * the one that knows why a forbidden override or a duplicate id is refused.
+ *
+ * The GitHub account (`ghUser`) is the one the remote already authenticates
+ * as (`detectGhUser`), unless the request names one, and it is also the
+ * default assignee. What would make that account unusable — no `gh` session
+ * for it, a remote that pushes as somebody else, no local `user.email` — does
+ * not refuse the import: it comes back in `warnings`, to be fixed before the
+ * first push, which is where it is enforced.
  */
-app.post('/api/projects', (req, res) => {
+app.post('/api/projects', async (req, res) => {
   try {
     const raw = String(req.body?.repoPath ?? '').trim();
     if (!raw) throw new Error('repoPath is required: the checkout path on this machine');
@@ -487,6 +495,7 @@ app.post('/api/projects', (req, res) => {
     if (requested && !isProfileId(requested)) throw new Error(`Perfil desconocido: ${requested}`);
     const kind = requested ?? detectProfile(repoPath);
     const segment = path.basename(repoPath);
+    const ghUser = pickText(body.ghUser) ?? await detectGhUser(repoPath);
     const entry = {
       id: segment.toLowerCase(),
       name: segment,
@@ -495,10 +504,10 @@ app.post('/api/projects', (req, res) => {
       // null when the remote is not a GitHub one the board can read; the
       // registry accepts that and `github.js` decides what to do about it.
       repo: detectRepo(repoPath),
-      // The assignee comes from the request, else the board's; the reviewer
-      // is never inherited from hfs: a new project has none until a person
-      // picks one (`needsReviewer` on «Listo para revisión»).
-      assignee: pickText(body.assignee) ?? config.github.assignee,
+      // The assignee comes from the request, else the project's account, else
+      // the board's; the reviewer is never inherited from hfs: a new project
+      // has none until a person picks one (`needsReviewer` on «Listo para revisión»).
+      assignee: pickText(body.assignee) ?? ghUser ?? config.github.assignee,
       // A new project inherits neither `e2e` nor `stack`: the global ones are
       // hfs's (cargo, its port env, its stack), and a blank repository given
       // them fails in a command that makes no sense there. The profile says
@@ -506,6 +515,7 @@ app.post('/api/projects', (req, res) => {
       // in projects.js, so the phases that need them skip).
       overrides: overridesOf(kind),
     };
+    if (ghUser) entry.ghUser = ghUser;
     const reviewer = pickText(body.reviewer);
     if (reviewer) entry.reviewer = reviewer;
     const language = pickText(body.language);
@@ -520,7 +530,7 @@ app.post('/api/projects', (req, res) => {
     if (old) {
       const { restricted: _r, ...rest } = old;
       toSave = { ...rest, ...entry, name: rest.name ?? entry.name, id: entry.id };
-      for (const k of ['assignee', 'reviewer', 'language', 'baseBranch']) {
+      for (const k of ['assignee', 'reviewer', 'language', 'baseBranch', 'ghUser']) {
         if (rest[k] !== undefined && pickText(body[k]) === null) toSave[k] = rest[k];
       }
       if (rest.kind && !requested) toSave.kind = rest.kind;
@@ -530,7 +540,39 @@ app.post('/api/projects', (req, res) => {
     const saved = saveProjects([...listProjects(), toSave]);
     forgetRemovedProject({ id: entry.id, repoPath });
     broadcast({ type: 'snapshot', ...snapshot() });
-    return res.status(201).json(saved.find((p) => p.id === entry.id));
+    const project = saved.find((p) => p.id === entry.id);
+    const warnings = await accountWarnings(project);
+    return res.status(201).json(warnings.length ? { ...project, warnings } : project);
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+});
+
+/** What stands between a project and working as its GitHub account; empty when nothing does or it declares none. */
+async function accountWarnings(project) {
+  if (!project?.ghUser) return [];
+  const out = [];
+  try { ghTokenFor(project.ghUser); } catch (e) { out.push(e.message); }
+  return [...out, ...await identityProblems(project.repoPath, project)];
+}
+
+// The project's GitHub account (`ghUser: null` goes back to the active `gh`
+// account) and, when given, its assignee. 404 unknown project, 400 bad login.
+// Answers the saved entry plus the same `warnings` as the import.
+app.post('/api/projects/:project/gh-account', async (req, res) => {
+  if (!projectOf(req.params.project)) return res.status(404).json({ error: `Unknown project: ${req.params.project}` });
+  const body = req.body;
+  if (!body || typeof body !== 'object' || !('ghUser' in body)) {
+    return res.status(400).json({ error: 'ghUser is required: a GitHub login, or null for the active gh account' });
+  }
+  try {
+    const saved = setGhAccount(req.params.project, {
+      ghUser: body.ghUser === null ? null : pickText(body.ghUser) ?? null,
+      assignee: pickText(body.assignee) ?? undefined,
+    });
+    broadcast({ type: 'snapshot', ...snapshot() });
+    const warnings = await accountWarnings(saved);
+    return res.json(warnings.length ? { ...saved, warnings } : saved);
   } catch (e) {
     return res.status(400).json({ error: e.message });
   }

@@ -245,6 +245,7 @@ export function tasksFileOf(projectId) {
  * @property {string} repo         GitHub `owner/name`, e.g. `HeliosSoftware/hfs`.
  * @property {string} assignee     the GitHub login whose assigned issues this project watches.
  * @property {string} reviewer     the GitHub login asked to review its PRs.
+ * @property {string} [ghUser]     the GitHub account its `gh` calls and agent sessions work as; absent means the active `gh` account.
  * @property {Object} overrides    per-project config overrides; `{}` when there are none.
  * @property {boolean} [restricted] `true` groups the project apart on the board and keeps it from being the opening project; absent means not restricted.
  * @property {boolean} [design]    `false` keeps the board's UX plugin out of this project's attended chats; absent means on.

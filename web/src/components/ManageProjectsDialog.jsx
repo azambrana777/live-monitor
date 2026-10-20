@@ -67,6 +67,7 @@ export default function ManageProjectsDialog({
                   {field(m.repo, x.repo)}
                   {field(m.path, x.repoPath)}
                   {field(m.assignee, x.assignee ? `@${x.assignee}` : '')}
+                  {field(m.account, x.ghUser ? `@${x.ghUser}` : '')}
                 </dl>
                 <div className="pm-card-actions">
                   <button type="button" className="btn btn-md" onClick={() => { onSelect?.(x.id); onClose?.(); }}>
