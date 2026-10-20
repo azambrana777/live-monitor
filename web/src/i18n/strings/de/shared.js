@@ -103,6 +103,9 @@ export default {
     gapsOff: 'Kein Schließen von Lücken: nach der Prüfung wird der PR unverändert geöffnet',
     gapsOn: 'Vor dem PR schließt das Board die Lücken, die die Prüfung findet',
     gapsAuto: 'Lücken schließen nach dem Board ({state})',
+    fullTestsOff: 'Gezielte Tests: nur was der Diff berührt läuft; den Rest übernimmt die CI',
+    fullTestsOn: 'Die Testphase führt die ganze Suite des Projekts aus',
+    fullTestsAuto: 'Der Testumfang folgt dem Board ({state})',
   },
   metrics: {
     kind: { phase: 'Phase', step: 'Schritt', session: 'Sitzung', wait: 'Wartezeit', chat: 'Chat', op: 'Vorgang' },

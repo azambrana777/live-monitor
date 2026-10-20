@@ -33,7 +33,7 @@ export function statusText(effective) {
  * decides what `auto` means, and the project's Browser QA switch can lock the card.
  *
  * @param {object} task a task as the board serves it
- * @param {'demo'|'browserQa'|'approvePlan'|'fixGaps'} key
+ * @param {'demo'|'browserQa'|'approvePlan'|'fixGaps'|'fullTests'} key
  * @returns {{ value: 'on'|'off'|'auto', effective: boolean, source: string, locked: boolean, detail: string }}
  */
 export function taskTriState(task, key) {
@@ -93,6 +93,18 @@ export function taskTriState(task, key) {
           : fill(w.gapsAuto, { state: statusText(t.fixGapsWanted === true) });
       return { value, effective, source: value === 'auto' ? w.fromBoard : w.chosen, locked: false, detail };
     }
+    case 'fullTests': {
+      // Off: the test phase runs only what the diff touched; CI runs the rest.
+      const value = t.fullTests ?? 'off';
+      const effective = value === 'on' || (value === 'auto' && t.fullTestsWanted === true);
+      const w = words();
+      const detail = value === 'off'
+        ? w.fullTestsOff
+        : value === 'on'
+          ? w.fullTestsOn
+          : fill(w.fullTestsAuto, { state: statusText(t.fullTestsWanted === true) });
+      return { value, effective, source: value === 'auto' ? w.fromBoard : w.chosen, locked: false, detail };
+    }
     default:
       throw new Error(`taskTriState: unknown setting "${key}"`); // i18n-ok: developer error
   }
@@ -108,7 +120,7 @@ const isOn = (key, v) => (DEFAULT_ON.has(key) ? v !== false : v === true);
  *
  * @param {object|undefined} own `settings.projects[activeProject] ?? {}`
  * @param {object|undefined} settings the board's flat settings
- * @param {string} key autoStart | browserQa | demo | approvePlan | fixGaps
+ * @param {string} key autoStart | browserQa | demo | approvePlan | fixGaps | fullTests
  * @param {boolean} hasProject with no active project the flat value is edited, so there is no `auto`
  * @returns {{ value: 'on'|'off'|'auto', effective: boolean, source: string }}
  */

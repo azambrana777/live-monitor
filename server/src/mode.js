@@ -190,6 +190,8 @@ export function migrateTask(task) {
   if (!['auto', 'on', 'off'].includes(task.approvePlan)) task.approvePlan = 'auto';
   // Same for the close-the-gaps round after the fix.
   if (!['auto', 'on', 'off'].includes(task.fixGaps)) task.fixGaps = 'auto';
+  // Full suite in the test phase: older tasks never had it, so they stay scoped.
+  if (!['auto', 'on', 'off'].includes(task.fullTests)) task.fullTests = 'off';
   // Design mark: a person's switch, off unless it is exactly true.
   if (task.design !== true) task.design = false;
   // A question a pipeline session asked, or a plan waiting for approval.

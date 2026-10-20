@@ -199,6 +199,7 @@ export const api = {
   setApprovePlan: (project, issue, mode) => send(`${T(project, issue)}/approve-plan`, { mode }),
   // «Cerrar huecos»: 'auto' | 'on' | 'off', like the plan switch.
   setFixGaps: (project, issue, mode) => send(`${T(project, issue)}/fix-gaps`, { mode }),
+  setFullTests: (project, issue, mode) => send(`${T(project, issue)}/full-tests`, { mode }),
   setDesign: (project, issue, on) => send(`${T(project, issue)}/design`, { on }),
   // Model and effort per role, for the board's «Modelos» section.
   tuning: () => get('/api/tuning'),

@@ -462,6 +462,9 @@ class Store extends EventEmitter {
       // only affects tasks created afterwards.
       approvePlan: settings.approvePlanFor(projectId) ? 'on' : 'off',
       fixGaps: settings.fixGapsFor(projectId) ? 'on' : 'off',
+      // Born from the project's value, off unless it says otherwise: the test
+      // phase runs only what the diff touched, `on` runs the whole suite.
+      fullTests: settings.fullTestsFor(projectId) ? 'on' : 'off',
       qa: null,
       qaBusy: false,
       stack: null,

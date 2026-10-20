@@ -49,6 +49,7 @@ import { artifactVerdict, artifactQuestion, isArtifactTool, CONFIRM_LABEL } from
 import { COLLECT_RULE } from './parallel.js';
 import { ghPublishProblems, ghGateMessage, callsGh, stateChangeProblem } from './ghgate.js';
 import { PHASE_LABEL, normalizePhase, planOfRun } from './phases.js';
+import { hasScopes, planScopes, describePlan } from './testscope.js';
 import { choosePrTitle, prTypeFor, PR_TITLE_MAX } from './prtitle.js';
 import { canAutoStart, modeOf, resumeStateFor, keepsForced, newestFirst, SETTABLE_MODES } from './mode.js';
 import {
@@ -4481,21 +4482,40 @@ async function testPhase(task, { machine = machineOf(task) } = {}) {
     return;
   }
   task.verification = 'e2e';
+  // Only what the diff touched, unless the person asked for the whole suite (or
+  // the project lists no scopes). The full suite is CI's job; a failure there
+  // comes back through the same repair loop.
+  const scoped = !fullTestsWanted(task) && hasScopes(cfg.e2e) ? await scopedPlanOf(task, machine, cfg.e2e) : null;
+  task.testScope = scoped ? describePlan(scoped) : 'full suite';
+  if (scoped) {
+    task.verification = 'scoped';
+    store.addLog(task, 'e2e', `${task.testScope}${scoped.ignored.length ? `; ${scoped.ignored.length} files need no test` : ''}${scoped.unmatched.length ? `; no scope for ${scoped.unmatched.length} files (left to CI)` : ''}`);
+    if (!scoped.runs.length) {
+      store.touch(task);
+      return;
+    }
+  }
+  const e2eCwd = machine.path.join(task.worktreePath, cfg.e2e.relativeCwd ?? '.');
+  const runs = scoped ? scoped.runs : [{ name: 'full', browser: true, prepareCommand: cfg.e2e.prepareCommand, cwd: e2eCwd, command: null }];
+  const needsBrowser = runs.some((r) => r.browser);
   // Dependencies before anything else, and outside the e2e gate: waiting for a
   // suite's turn to find out an install is broken wastes the turn. It is the
   // same step the pipeline already ran before the fix, so here it normally only
   // reads the marker — and the repair loop and the change request, which both
-  // come in through this door, inherit it too.
-  const deps = await prepareDependencies(task, machine, 'test');
-  if (!deps.ok) throw dependencyError(infrastructureFailure(deps));
-  const e2eCwd = machine.path.join(task.worktreePath, cfg.e2e.relativeCwd ?? '.');
+  // come in through this door, inherit it too. A scoped run with no browser
+  // test has no use for them.
+  if (needsBrowser) {
+    const deps = await prepareDependencies(task, machine, 'test');
+    if (!deps.ok) throw dependencyError(infrastructureFailure(deps));
+  }
   const timeoutMs = (cfg.e2e.timeoutMinutes ?? E2E_TIMEOUT_DEFAULT_MINUTES) * 60 * 1000;
   const { portEnv, portOffsets, portRange } = cfg.e2e;
   // All three or none: see the contract above.
-  const wantsPorts = Boolean(portEnv && portOffsets?.length && portRange);
+  const wantsPorts = needsBrowser && Boolean(portEnv && portOffsets?.length && portRange);
 
   for (let attempt = 1; ; attempt++) {
-    const e2eGate = e2eGateFor(machine);
+    // Only runs with a browser take a turn on the machine's e2e gate.
+    const e2eGate = needsBrowser ? e2eGateFor(machine) : { active: 0, limit: 1, waiting: 0, run: (fn) => fn() };
     if (e2eGate.active >= e2eGate.limit) {
       store.addLog(task, 'e2e', `waiting for a turn on ${machine.name} (${e2eGate.active}/${e2eGate.limit} suites running, ${e2eGate.waiting} queued)`);
     }
@@ -4519,27 +4539,33 @@ async function testPhase(task, { machine = machineOf(task) } = {}) {
         // profile was built most recently, so build the one we want last. It
         // must be release: boot.mjs always sets HFS_DATABASE_URL, and that
         // alone makes the debug binary overflow its stack at startup.
-        if (cfg.e2e.prepareCommand) {
-          store.addLog(task, 'e2e', `preparing the binary: ${cfg.e2e.prepareCommand}`);
-          const prep = await machine.shell(cfg.e2e.prepareCommand, {
-            cwd: task.worktreePath,
-            timeoutMs: (cfg.e2e.prepareTimeoutMinutes ?? 90) * 60 * 1000,
-            env,
-            onLine: (l) => store.addLog(task, 'e2e', l),
+        for (const run of runs) {
+          const full = run.name === 'full';
+          if (run.prepareCommand) {
+            store.addLog(task, 'e2e', `preparing${full ? ' the binary' : ` [${run.name}]`}: ${run.prepareCommand}`);
+            const prep = await machine.shell(run.prepareCommand, {
+              cwd: task.worktreePath,
+              timeoutMs: (cfg.e2e.prepareTimeoutMinutes ?? 90) * 60 * 1000,
+              env,
+              onLine: (l) => store.addLog(task, 'e2e', l),
+            });
+            if (!prep.ok) return { ok: false, tail: prep.stderr.slice(-4000) };
+          }
+          // The suite's own `workers: 1` is deliberate — one shared HFS serves the
+          // whole run, and more browsers against one database means flaky tests,
+          // not fast ones. So the knob only reaches Playwright when it is raised
+          // on purpose, and the default leaves the suite as its authors set it.
+          const workers = Number(cfg.e2e.workers) || 1;
+          const base = run.command ?? cfg.e2e.testCommand;
+          const testCommand = full && workers > 1 ? `${base} --workers=${workers}` : base;
+          const cwd = full ? e2eCwd : run.cwd ? machine.path.join(task.worktreePath, run.cwd) : task.worktreePath;
+          store.addLog(task, 'e2e', `running${full ? '' : ` [${run.name}]`}: ${testCommand} (attempt ${attempt})`);
+          const r = await machine.shell(testCommand, {
+            cwd, timeoutMs, env, onLine: (l) => store.addLog(task, 'e2e', l),
           });
-          if (!prep.ok) return { ok: false, tail: prep.stderr.slice(-4000) };
+          if (!r.ok) return { ok: false, tail: `${full ? '' : `[${run.name}]\n`}${(r.stdout + '\n' + r.stderr).slice(-6000)}` };
         }
-        // The suite's own `workers: 1` is deliberate — one shared HFS serves the
-        // whole run, and more browsers against one database means flaky tests,
-        // not fast ones. So the knob only reaches Playwright when it is raised
-        // on purpose, and the default leaves the suite as its authors set it.
-        const workers = Number(cfg.e2e.workers) || 1;
-        const testCommand = workers > 1 ? `${cfg.e2e.testCommand} --workers=${workers}` : cfg.e2e.testCommand;
-        store.addLog(task, 'e2e', `running: ${testCommand} (attempt ${attempt})`);
-        const r = await machine.shell(testCommand, {
-          cwd: e2eCwd, timeoutMs, env, onLine: (l) => store.addLog(task, 'e2e', l),
-        });
-        return { ok: r.ok, tail: (r.stdout + '\n' + r.stderr).slice(-6000) };
+        return { ok: true, tail: '' };
       } finally {
         if (ports.length) releasePorts(machine, ports);
       }
@@ -4592,6 +4618,40 @@ async function testPhase(task, { machine = machineOf(task) } = {}) {
     await fixPhase(task, issue, cr ? `${changeRequestSection(cr)}\n${failure}` : failure);
     store.setState(task, 'testing');
   }
+}
+
+/** Whether the test phase runs the project's whole suite for this task. */
+export function fullTestsWanted(task) {
+  if (task.fullTests === 'on') return true;
+  if (task.fullTests === 'off') return false;
+  return settings.fullTestsFor(task.project);
+}
+
+export function setFullTests(issue, mode) {
+  assertNoUpgradeRunning();
+  const task = store.get(issue);
+  if (!task) throw new Error(`Unknown task #${issue}`);
+  if (!['auto', 'on', 'off'].includes(mode)) throw new Error('mode must be auto, on or off');
+  task.fullTests = mode;
+  store.addLog(task, 'e2e', `full suite in the test phase: ${mode === 'auto' ? `per the board (${settings.fullTestsFor(task.project) ? 'yes' : 'no'})` : mode === 'on' ? 'yes' : 'no'}`);
+  store.touch(task);
+  return mode;
+}
+
+/**
+ * The scoped plan for this task: the branch's changed files against the base,
+ * through the project's `e2e.scopes`. A diff that cannot be read plans nothing
+ * (and says so): the full suite is never the fallback.
+ */
+async function scopedPlanOf(task, machine, e2e) {
+  const base = baseOf(task);
+  const r = await machine.exec('git', ['-c', 'core.quotePath=false', 'diff', '--name-only', `origin/${base}...HEAD`], { cwd: task.worktreePath });
+  if (!r.ok) {
+    store.addLog(task, 'e2e', `could not read the diff against origin/${base}: nothing to run, CI will test it`);
+    return { runs: [], covered: [], ignored: [], unmatched: [] };
+  }
+  const files = r.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return planScopes(e2e, files, { base });
 }
 
 /**

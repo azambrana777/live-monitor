@@ -29,6 +29,7 @@ const PROJECT_ROWS = [
   projectRow('approvePlan', 'note'),
   projectRow('browserQa', 'compass', 'Browser QA'), // i18n-ok: a phase name, the same in every language
   projectRow('fixGaps', 'bandage'),
+  projectRow('fullTests', 'flask'),
   projectRow('demo', 'film', 'Demo'), // i18n-ok: a phase name, the same in every language
 ];
 

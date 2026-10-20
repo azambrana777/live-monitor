@@ -105,6 +105,9 @@ export default {
     gapsOff: 'Sin cierre de huecos: tras la verificación se abre el PR tal cual',
     gapsOn: 'Antes del PR, el tablero cierra los huecos que la verificación encuentre',
     gapsAuto: 'Cerrar huecos según el tablero ({state})',
+    fullTestsOff: 'Tests acotados: solo corre lo que toca el diff; el resto lo corre CI',
+    fullTestsOn: 'La fase de tests corre la suite completa del proyecto',
+    fullTestsAuto: 'Alcance de los tests según el tablero ({state})',
   },
   metrics: {
     kind: { phase: 'fase', step: 'paso', session: 'sesión', wait: 'espera', chat: 'chat', op: 'operación' },

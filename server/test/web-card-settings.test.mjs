@@ -21,12 +21,12 @@ test('no switches left in the card: neither Toggle nor role=switch', () => {
   assert.equal(/\b(c1|c2|span-2|ctl-group)\b/.test(settings), false);
 });
 
-test('the four three-valued settings are segmented controls over TRI_OPTIONS', () => {
+test('the five three-valued settings are segmented controls over TRI_OPTIONS', () => {
   assert.match(settings, /<SettingsGroup|export default function SettingsGroup/);
-  assert.equal(count(/<TriRow\b/g), 4);
+  assert.equal(count(/<TriRow\b/g), 5);
   assert.equal(count(/<SegmentedControl\b/g), 1, 'one control, rendered by TriRow for each row');
   assert.match(settings, /options=\{TRI_OPTIONS\}/);
-  for (const k of ['demo', 'browserQa', 'approvePlan', 'fixGaps']) {
+  for (const k of ['demo', 'browserQa', 'approvePlan', 'fixGaps', 'fullTests']) {
     assert.match(settings, new RegExp(`settingKey="${k}"`));
   }
   assert.match(settings, /taskTriState\(task, settingKey\)/);

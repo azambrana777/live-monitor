@@ -115,6 +115,10 @@ export default {
         name: 'Combler les lacunes',
         title: 'Avant la PR, le tableau comble les lacunes que la vérification trouve. Chaque carte peut le modifier',
       },
+      fullTests: {
+        name: 'Suite complète',
+        title: 'La phase de tests exécute toute la suite au lieu de ce que touche le diff. Désactivée par défaut : la CI fait le reste. Chaque carte peut la changer',
+      },
       demo: {
         title: 'La phase Demo génère les étapes pour essayer le changement à la fin du run. Désactivée ici, les tâches de ce projet en « auto » ne la génèrent pas ; chaque carte peut le modifier',
       },

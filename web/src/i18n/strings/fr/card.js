@@ -94,6 +94,7 @@ export default {
     title: 'Réglages de la tâche',
     openSettings: 'Ouvrir les réglages',
     gaps: 'Lacunes',
+    fullTests: 'Tests complets',
     manual: 'Manuel',
     sourceManual: 'manuel',
     sourceAuto: 'automatique',
