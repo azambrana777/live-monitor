@@ -94,6 +94,7 @@ export default {
     title: 'Aufgabeneinstellungen',
     openSettings: 'Einstellungen öffnen',
     gaps: 'Lücken',
+    fullTests: 'Volle Tests',
     manual: 'Manuell',
     sourceManual: 'manuell',
     sourceAuto: 'automatisch',

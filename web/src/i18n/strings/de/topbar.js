@@ -115,6 +115,10 @@ export default {
         name: 'Lücken schließen',
         title: 'Vor dem PR schließt das Board die Lücken, die die Prüfung findet. Jede Karte kann das ändern',
       },
+      fullTests: {
+        name: 'Volle Testsuite',
+        title: 'Die Testphase führt die ganze Suite aus statt nur dessen, was der Diff berührt. Standardmäßig aus: den Rest übernimmt die CI. Jede Karte kann es ändern',
+      },
       demo: {
         title: 'Die Demo-Phase erzeugt am Ende des Runs die Schritte, um die Änderung auszuprobieren. Hier ausgeschaltet, erzeugen Aufgaben dieses Projekts auf „auto“ sie nicht; jede Karte kann das ändern',
       },

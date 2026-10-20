@@ -93,6 +93,7 @@ export default {
     title: 'Task settings',
     openSettings: 'Open Settings',
     gaps: 'Gaps',
+    fullTests: 'Full tests',
     manual: 'Manual mode',
     sourceManual: 'manual mode',
     sourceAuto: 'automatic',

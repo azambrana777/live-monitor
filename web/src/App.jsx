@@ -1097,6 +1097,7 @@ export default function App() {
           onReviewPlan={(issue) => setTaskDialog({ project: activeProject, issue, kind: 'plan' })}
           onSetApprovePlan={(issue, mode) => api.setApprovePlan(activeProject, issue, mode).catch(say)}
           onSetFixGaps={(issue, mode) => api.setFixGaps(activeProject, issue, mode).catch(say)}
+          onSetFullTests={(issue, mode) => api.setFullTests(activeProject, issue, mode).catch(say)}
           onSetDesign={(issue, on) => api.setDesign(activeProject, issue, on).catch(say)}
           onSetMode={(issue, mode) => api.setMode(activeProject, issue, mode).catch(say)}
           onStartCr={(issue) => api.startCr(activeProject, issue).catch(say)}

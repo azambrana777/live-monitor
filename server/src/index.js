@@ -18,7 +18,7 @@ import {
   setDemo, demoWanted,
   answerChatPending, setChatPlanMode, stopChatPlan, continueChatPlan,
   answerTaskPending, setApprovePlan, decideTaskPlan, approvePlanWanted,
-  fixGapsWanted, setFixGaps, setDesign,
+  fixGapsWanted, setFixGaps, fullTestsWanted, setFullTests, setDesign,
   backfillAgent, agentCalls, stopBackground, startTask, isUserRun, isRunning,
   draftIssueClosing, discardIssueClosing, closeIssueWithoutPr, renameChat, bootstrapRepo, changeBaseBranch, refreshGitNow,
 } from './pipeline.js';
@@ -256,6 +256,9 @@ const publicTask = (t, known = machines()) => {
     // latest session of each phase, for the chip.
     fixGaps: t.fixGaps ?? 'auto',
     fixGapsWanted: fixGapsWanted(t),
+    fullTests: t.fullTests ?? 'off',
+    fullTestsWanted: fullTestsWanted(t),
+    testScope: t.testScope ?? null,
     hasStack: hasStackOf(t), stack: publicStack(t.stack),
     phaseModels: t.phaseModels ?? undefined,
     // A fix plan being made or remade right now; the bubble id and the
@@ -916,6 +919,13 @@ app.post('/api/projects/:project/tasks/:issue/plan/decide', withTask((task, req,
 app.post('/api/projects/:project/tasks/:issue/approve-plan', withTask((task, req, res) => {
   try {
     res.json({ approvePlan: setApprovePlan(keyOf(task), String(req.body?.mode ?? 'auto')) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+}));
+app.post('/api/projects/:project/tasks/:issue/full-tests', withTask((task, req, res) => {
+  try {
+    res.json({ fullTests: setFullTests(keyOf(task), String(req.body?.mode ?? 'auto')) });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -1645,7 +1655,7 @@ store.on('project-chat', (holder) => broadcast({ type: 'project-chat', holder: h
 // (chat tabs also emit `change`), and straight to the sockets, never through
 // `store.touch`, so nothing is written to disk.
 let taskSettingsSig = '';
-const taskSettingsSigOf = (v) => JSON.stringify([v.browserQa, v.approvePlan, v.fixGaps, v.demo, v.projects ?? {}]);
+const taskSettingsSigOf = (v) => JSON.stringify([v.browserQa, v.approvePlan, v.fixGaps, v.fullTests, v.demo, v.projects ?? {}]);
 settings.on('change', (values) => {
   broadcast({ type: 'settings', settings: values });
   const sig = taskSettingsSigOf(values);

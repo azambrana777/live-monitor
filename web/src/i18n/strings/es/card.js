@@ -98,6 +98,7 @@ export default {
     title: 'Ajustes de la tarea',
     openSettings: 'Abrir Ajustes',
     gaps: 'Huecos',
+    fullTests: 'Tests completos',
     manual: 'Manual',
     sourceManual: 'manual',
     sourceAuto: 'automática',
