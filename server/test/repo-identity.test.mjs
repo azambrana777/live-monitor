@@ -23,6 +23,7 @@ test('parseGitHubRemote reads HTTPS and SSH origins, with and without a trailing
   assert.equal(parseGitHubRemote('https://github.com/HeliosSoftware/hfs'), 'HeliosSoftware/hfs');
   assert.equal(parseGitHubRemote('git@github.com:HeliosSoftware/hfs.git'), 'HeliosSoftware/hfs');
   assert.equal(parseGitHubRemote('git@github.com:HeliosSoftware/hfs'), 'HeliosSoftware/hfs');
+  assert.equal(parseGitHubRemote('git@github-work:HeliosSoftware/hfs.git'), 'HeliosSoftware/hfs');
 });
 
 test('parseGitHubRemote returns null for anything it cannot read, never throws', () => {
@@ -30,6 +31,7 @@ test('parseGitHubRemote returns null for anything it cannot read, never throws',
     null, undefined, '', 'not a url',
     'https://gitlab.com/Foo/Bar.git',        // right shape, wrong host
     'ssh://git@github.com/Foo/Bar.git',      // the ssh:// form — only the scp-style git@ form is in scope
+    'git@gitlab-work:Foo/Bar.git',           // an alias, but not a github-<account> one
   ]) {
     assert.equal(parseGitHubRemote(bad), null, String(bad));
   }

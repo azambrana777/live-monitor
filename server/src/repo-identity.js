@@ -2,10 +2,11 @@ import { execFileSync } from 'node:child_process';
 
 // https://github.com/OWNER/REPO(.git)? and git@github.com:OWNER/REPO(.git)? —
 // the two forms `git remote get-url origin` can hand back for a GitHub
-// remote. Anything else (a different host, an SSH alias, a malformed URL)
-// falls through to null.
+// remote. The SSH form also takes a `github-<account>` host alias, the usual
+// ~/.ssh/config trick for several GitHub accounts on one machine. Anything
+// else (a different host, another alias, a malformed URL) falls through to null.
 const HTTPS_ORIGIN = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/;
-const SSH_ORIGIN = /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/;
+const SSH_ORIGIN = /^git@github(?:\.com|-[\w.-]+):([^/]+)\/([^/]+?)(?:\.git)?$/;
 
 /**
  * Parses `owner/repo` out of a GitHub remote URL. Returns null for anything
