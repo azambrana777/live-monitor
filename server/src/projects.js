@@ -358,6 +358,13 @@ function load() {
     // and caching the seed here would quietly take that away. A file on disk
     // is a decision someone made and is cached; a seed is just today's config
     // wearing a registry's shape.
+    //
+    // A config that names no checkout (`project.repoPath` empty, as in the
+    // checked-in `config.json` of a fresh board) describes no project at all:
+    // seeding one would put an entry that fails validation in front of every
+    // list, and the first import, which saves the whole list, would be refused
+    // for it. Such a board starts empty, like one whose projects were removed.
+    if (!config.project?.repoPath?.trim()) return [];
     announceOnce(SEED_ANNOUNCED, null);
     return [seed()];
   }

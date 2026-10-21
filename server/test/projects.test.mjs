@@ -75,6 +75,18 @@ test('sin projects.json el registro se siembra del config, y no escribe nada', a
   assert.equal(existsSync(FILE), false, 'cargar el registro no escribe projects.json');
 });
 
+test('sin projects.json y sin checkout en el config, el registro empieza vacío y el primer import se guarda', async (t) => {
+  const saved = config.project.repoPath;
+  t.after(() => { config.project.repoPath = saved; rmSync(FILE, { force: true }); });
+  config.project.repoPath = '';
+  const { listProjects, saveProjects } = await withProjectsFile(undefined);
+
+  assert.deepEqual(listProjects(), [], 'un hfs sin repoPath no es un proyecto: no se siembra');
+  // Lo que hace el import: la lista de ahora más el nuevo. Antes fallaba con
+  // `projects[0].repoPath: expected a non-empty string, not ""`.
+  assert.deepEqual(saveProjects([...listProjects(), entry()]).map((p) => p.id), ['beta']);
+});
+
 test('projectOf devuelve undefined para un id que nadie registró', async () => {
   const { projectOf } = await withProjectsFile(undefined);
   assert.equal(projectOf('no-existe'), undefined);
