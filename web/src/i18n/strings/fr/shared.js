@@ -103,6 +103,9 @@ export default {
     gapsOff: "Pas de fermeture des lacunes : après la vérification, la PR s'ouvre telle quelle",
     gapsOn: 'Avant la PR, le tableau ferme les lacunes que la vérification trouve',
     gapsAuto: 'Fermeture des lacunes selon le tableau ({state})',
+    fullTestsOff: "Tests ciblés : seul ce que touche le diff s'exécute ; la CI fait le reste",
+    fullTestsOn: 'La phase de tests exécute toute la suite du projet',
+    fullTestsAuto: 'La portée des tests suit le tableau ({state})',
   },
   metrics: {
     kind: { phase: 'phase', step: 'étape', session: 'session', wait: 'attente', chat: 'conversation', op: 'opération' },

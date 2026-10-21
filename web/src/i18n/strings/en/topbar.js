@@ -92,6 +92,16 @@ export default {
     repo: 'Repository',
     path: 'Path',
     assignee: 'Assignee',
+    account: 'GitHub account',
+    accountActive: 'Active gh account',
+    accountActiveIs: 'Active gh account ({account})',
+    accountLabel: '@{login} — {email}',
+    accountWarning: {
+      no_session: 'gh has no session for the account {login}: run `gh auth login` and sign in as {login}.',
+      no_local_email: 'The repository has no local user.email, so commits would carry the global one: run `git config user.email <email of {login}>` in {repoPath}.',
+      push_unverified: '`ssh -T` to the origin remote did not answer with a GitHub account: the push cannot be checked to go out as {login}.',
+      push_mismatch: 'The origin remote pushes as {pusher}, not as {login}: point it at an SSH host alias whose key belongs to {login}.',
+    },
     grid: 'Board projects',
   },
   settings: {
@@ -114,6 +124,10 @@ export default {
       fixGaps: {
         name: 'Close gaps',
         title: 'Before the PR, the board closes the gaps that verification finds. Each card can change it',
+      },
+      fullTests: {
+        name: 'Full test suite',
+        title: 'The test phase runs the whole suite instead of only what the diff touched. Off by default: CI runs the rest. Each card can change it',
       },
       demo: {
         title: 'The Demo phase generates the steps to try the change when the run ends. Turned off here, tasks of this project set to “auto” do not generate it; each card can change it',
@@ -234,12 +248,17 @@ export default {
     deduced: 'What the board works out',
     couldNotDeduce: 'the board could not work it out',
     deduces: 'worked out automatically',
+    required: 'required',
+    assigneeDefault: 'used when left empty',
+    warnings: 'Imported. Before the first push, check:',
+    understood: 'Got it',
     fields: {
       id: { label: 'Identifier', hint: 'lowercase letters, digits and hyphens; taken from the last segment of the path' },
       name: { label: 'Name', hint: 'what the picker will show' },
       repo: { label: 'Repository', hint: 'owner/name; taken from the remote' },
       worktreeRoot: { label: 'Worktrees root', hint: 'by convention, <checkout>-wt' },
-      assignee: { label: 'Assignee', hint: 'the GitHub login whose issues it watches' },
+      ghUser: { label: 'GitHub account', hint: 'the one it publishes issues and PRs as; read from the SSH key of the remote' },
+      assignee: { label: 'Assignee', hint: 'the GitHub login whose issues it watches; the account by default' },
       reviewer: { label: 'Reviewer', hint: 'who reviews are requested from' },
     },
   },

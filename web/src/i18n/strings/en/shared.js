@@ -102,6 +102,9 @@ export default {
     gapsOff: 'No gap closing: after verification the PR is opened as it is',
     gapsOn: 'Before the PR, the board closes the gaps that verification finds',
     gapsAuto: 'Gap closing follows the board ({state})',
+    fullTestsOff: 'Scoped tests: only what the diff touched runs; CI runs the rest',
+    fullTestsOn: "The test phase runs the project's whole suite",
+    fullTestsAuto: 'Test scope follows the board ({state})',
   },
   metrics: {
     kind: { phase: 'phase', step: 'step', session: 'session', wait: 'wait', chat: 'conversation', op: 'operation' },

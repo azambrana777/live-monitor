@@ -9,6 +9,25 @@
     "testCommand": "npm test -- --reporter=list",
     "workers": 1,
     "timeoutMinutes": 60,
+    "ignore": ["**/*.md", "docs/**", "LICENSE*"],
+    "scopes": [
+      {
+        "name": "ui-e2e",
+        "paths": ["crates/ui/**", "crates/ui-chrome/**", "locales/**"],
+        "browser": true,
+        "cwd": "crates/ui/e2e",
+        "prepareCommand": "cargo build -p helios-hfs --features ui --release",
+        "command": "npm test -- --only-changed=origin/{base} --pass-with-no-tests --reporter=list"
+      },
+      {
+        "name": "rust",
+        "paths": ["crates/**/*.rs", "crates/**/Cargo.toml"],
+        "crates": "^crates/([^/]+)/",
+        "cratePrefix": "helios-",
+        "crateOf": { "pysof": "pysof" },
+        "command": "cargo test {crates}"
+      }
+    ],
     "prepareCommand": "cargo build -p helios-hfs --features ui --release",
     "prepareTimeoutMinutes": 90,
     "portEnv": "HFS_E2E_PORT",

@@ -1004,7 +1004,7 @@ export default function App() {
         }}
         moreMenu={{
           checkingUpdates, updatesDisabled: checkingUpdates || offerOpen || upgradeDialog,
-          onCheckUpdates: checkForUpdates, onImported: projectImported,
+          onCheckUpdates: checkForUpdates, onImported: projectImported, defaultAssignee: meta.github?.assignee ?? null,
         }}
         machines={machines} machineStatus={machineStatus} onOpenMetrics={() => setMetricsOpen(true)}
         gitRefresh={{ busy: refreshingGit, run: runGitRefresh }}
@@ -1097,6 +1097,7 @@ export default function App() {
           onReviewPlan={(issue) => setTaskDialog({ project: activeProject, issue, kind: 'plan' })}
           onSetApprovePlan={(issue, mode) => api.setApprovePlan(activeProject, issue, mode).catch(say)}
           onSetFixGaps={(issue, mode) => api.setFixGaps(activeProject, issue, mode).catch(say)}
+          onSetFullTests={(issue, mode) => api.setFullTests(activeProject, issue, mode).catch(say)}
           onSetDesign={(issue, on) => api.setDesign(activeProject, issue, on).catch(say)}
           onSetMode={(issue, mode) => api.setMode(activeProject, issue, mode).catch(say)}
           onStartCr={(issue) => api.startCr(activeProject, issue).catch(say)}
@@ -1168,7 +1169,7 @@ export default function App() {
 
       {modelsOpen && <ModelsDialog onClose={() => setModelsOpen(false)} />}
       {importOpen && (
-        <ImportProjectDialog onClose={() => setImportOpen(false)} onImported={(p) => { setImportOpen(false); projectImported(p); }} />
+        <ImportProjectDialog defaultAssignee={meta.github?.assignee ?? null} onClose={() => setImportOpen(false)} onImported={(p) => { setImportOpen(false); projectImported(p); }} />
       )}
       {manageOpen && (
         <ManageProjectsDialog

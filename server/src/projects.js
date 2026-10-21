@@ -230,6 +230,12 @@ function normalize(raw, where) {
   if (raw.lastReviewer !== undefined && raw.lastReviewer !== null) {
     out.lastReviewer = loginOf(raw.lastReviewer, `${where}.lastReviewer`);
   }
+  // The GitHub account the project works as: a login, never a token. The
+  // token is asked of `gh`'s keyring at use (`gh-account.js`), so nothing
+  // secret ever reaches this file.
+  if (raw.ghUser !== undefined && raw.ghUser !== null) {
+    out.ghUser = loginOf(raw.ghUser, `${where}.ghUser`);
+  }
   if (raw.noReviewer !== undefined && raw.noReviewer !== null) {
     if (typeof raw.noReviewer !== 'boolean') {
       throw new Error(`${where}.noReviewer: expected true or false, not ${JSON.stringify(raw.noReviewer)}`);
@@ -352,6 +358,13 @@ function load() {
     // and caching the seed here would quietly take that away. A file on disk
     // is a decision someone made and is cached; a seed is just today's config
     // wearing a registry's shape.
+    //
+    // A config that names no checkout (`project.repoPath` empty, as in the
+    // checked-in `config.json` of a fresh board) describes no project at all:
+    // seeding one would put an entry that fails validation in front of every
+    // list, and the first import, which saves the whole list, would be refused
+    // for it. Such a board starts empty, like one whose projects were removed.
+    if (!config.project?.repoPath?.trim()) return [];
     announceOnce(SEED_ANNOUNCED, null);
     return [seed()];
   }
@@ -545,6 +558,61 @@ export function setNoReviewer(id, value) {
     delete target.noReviewer;
   }
   return saveProjects(list);
+}
+
+/**
+ * Changes the GitHub account a project works as, and optionally its assignee,
+ * through the same single writer. `ghUser: null` removes the field: the
+ * project goes back to the active `gh` account. The assignee is only touched
+ * when given, because who issues are assigned to and who publishes are two
+ * decisions that usually, but not always, coincide.
+ *
+ * @param {string} id
+ * @param {{ghUser?: string|null, assignee?: string}} patch
+ * @returns {Project} the saved entry.
+ * @throws {Error} if the project is unknown or a login is not a valid one.
+ */
+export function setGhAccount(id, { ghUser, assignee } = {}) {
+  const list = load().map((p) => ({ ...p }));
+  const target = list.find((p) => p.id === id);
+  if (!target) throw new Error(`setGhAccount: no project is registered as ${JSON.stringify(id ?? null)}`);
+  if (ghUser === null) delete target.ghUser;
+  else if (ghUser !== undefined) target.ghUser = loginOf(ghUser, 'ghUser');
+  if (assignee !== undefined) target.assignee = loginOf(assignee, 'assignee');
+  return saveProjects(list).find((p) => p.id === id);
+}
+
+/** A path compared as the file system does: forward slashes, no trailing one, case-folded on Windows. */
+function samePathForm(p) {
+  const s = path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '');
+  return process.platform === 'win32' ? s.toLowerCase() : s;
+}
+
+/**
+ * The project a directory belongs to: the one whose checkout or worktree root
+ * contains it, the deepest match winning. `undefined` for a directory of no
+ * project. This is how a session started with only a `cwd` learns whose
+ * GitHub account it works as.
+ *
+ * @param {string} dir
+ * @returns {Project|undefined}
+ */
+export function projectAt(dir) {
+  if (typeof dir !== 'string' || !dir) return undefined;
+  const here = samePathForm(dir);
+  let best;
+  let bestLength = -1;
+  for (const p of load()) {
+    for (const root of [p.repoPath, p.worktreeRoot]) {
+      if (typeof root !== 'string' || !root) continue;
+      const r = samePathForm(root);
+      if ((here === r || here.startsWith(`${r}/`)) && r.length > bestLength) {
+        best = p;
+        bestLength = r.length;
+      }
+    }
+  }
+  return best;
 }
 
 /**

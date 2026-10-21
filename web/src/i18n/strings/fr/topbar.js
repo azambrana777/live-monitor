@@ -92,6 +92,16 @@ export default {
     repo: 'Dépôt',
     path: 'Chemin',
     assignee: 'Assigné',
+    account: 'Compte GitHub',
+    accountActive: 'Compte gh actif',
+    accountActiveIs: 'Compte gh actif ({account})',
+    accountLabel: '@{login} — {email}',
+    accountWarning: {
+      no_session: 'gh n’a pas de session pour le compte {login} : lancez `gh auth login` et connectez-vous en tant que {login}.',
+      no_local_email: 'Le dépôt n’a pas de user.email local, les commits porteraient le global : lancez `git config user.email <e-mail de {login}>` dans {repoPath}.',
+      push_unverified: '`ssh -T` vers le remote origin n’a répondu avec aucun compte GitHub : impossible de vérifier que le push part en tant que {login}.',
+      push_mismatch: 'Le remote origin pousse en tant que {pusher}, pas {login} : pointez-le vers un alias SSH dont la clé appartient à {login}.',
+    },
     grid: 'Projets du tableau',
   },
   settings: {
@@ -114,6 +124,10 @@ export default {
       fixGaps: {
         name: 'Combler les lacunes',
         title: 'Avant la PR, le tableau comble les lacunes que la vérification trouve. Chaque carte peut le modifier',
+      },
+      fullTests: {
+        name: 'Suite complète',
+        title: 'La phase de tests exécute toute la suite au lieu de ce que touche le diff. Désactivée par défaut : la CI fait le reste. Chaque carte peut la changer',
       },
       demo: {
         title: 'La phase Demo génère les étapes pour essayer le changement à la fin du run. Désactivée ici, les tâches de ce projet en « auto » ne la génèrent pas ; chaque carte peut le modifier',
@@ -234,12 +248,17 @@ export default {
     deduced: 'Ce que le tableau déduit',
     couldNotDeduce: 'le tableau n’a pas pu le déduire',
     deduces: 'déduit automatiquement',
+    required: 'obligatoire',
+    assigneeDefault: 'utilisé si le champ reste vide',
+    warnings: 'Importé. Avant le premier push, vérifiez :',
+    understood: 'Compris',
     fields: {
       id: { label: 'Identifiant', hint: 'minuscules, chiffres et tirets ; vient du dernier segment du chemin' },
       name: { label: 'Nom', hint: 'ce qu’affichera le sélecteur' },
       repo: { label: 'Dépôt', hint: 'owner/name ; vient du remote' },
       worktreeRoot: { label: 'Racine des worktrees', hint: 'par convention, <checkout>-wt' },
-      assignee: { label: 'Assigné', hint: 'le login GitHub dont il surveille les issues' },
+      ghUser: { label: 'Compte GitHub', hint: 'celui avec lequel il publie issues et PR ; lu dans la clé SSH du remote' },
+      assignee: { label: 'Assigné', hint: 'le login GitHub dont il surveille les issues ; par défaut, le compte' },
       reviewer: { label: 'Relecteur', hint: 'à qui les revues sont demandées' },
     },
   },

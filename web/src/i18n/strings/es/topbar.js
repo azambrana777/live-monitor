@@ -95,6 +95,16 @@ export default {
     repo: 'Repositorio',
     path: 'Ruta',
     assignee: 'Asignado',
+    account: 'Cuenta de GitHub',
+    accountActive: 'Cuenta activa de gh',
+    accountActiveIs: 'Cuenta activa de gh ({account})',
+    accountLabel: '@{login} — {email}',
+    accountWarning: {
+      no_session: 'gh no tiene sesión para la cuenta {login}: ejecuta `gh auth login` y entra como {login}.',
+      no_local_email: 'El repositorio no tiene user.email local y los commits llevarían el global: ejecuta `git config user.email <correo de {login}>` en {repoPath}.',
+      push_unverified: '`ssh -T` al remoto origin no respondió con ninguna cuenta de GitHub: no se puede comprobar que el push salga como {login}.',
+      push_mismatch: 'El remoto origin hace push como {pusher}, no como {login}: apúntalo a un alias SSH cuya clave sea de {login}.',
+    },
     grid: 'Proyectos del tablero',
   },
   settings: {
@@ -117,6 +127,10 @@ export default {
       fixGaps: {
         name: 'Cerrar huecos',
         title: 'Antes del PR, el tablero cierra los huecos que la verificación encuentre. Cada tarjeta puede cambiarlo',
+      },
+      fullTests: {
+        name: 'Suite completa',
+        title: 'La fase de tests corre toda la suite en vez de solo lo que toca el diff. Apagada de serie: el resto lo corre CI. Cada tarjeta puede cambiarlo',
       },
       demo: {
         title: 'La fase Demo genera los pasos para probar el cambio al terminar el run. Apagada aquí, las tareas de este proyecto en «auto» no la generan; cada tarjeta puede cambiarlo',
@@ -237,12 +251,17 @@ export default {
     deduced: 'Lo que el tablero deduce',
     couldNotDeduce: 'el tablero no pudo deducirlo',
     deduces: 'se deduce',
+    required: 'obligatorio',
+    assigneeDefault: 'se usa este si lo dejas vacío',
+    warnings: 'Importado. Antes del primer push, revisa:',
+    understood: 'Entendido',
     fields: {
       id: { label: 'Identificador', hint: 'minúsculas, números y guiones; sale del último segmento de la ruta' },
       name: { label: 'Nombre', hint: 'lo que dirá el selector' },
       repo: { label: 'Repositorio', hint: 'owner/name; sale del remoto' },
       worktreeRoot: { label: 'Raíz de worktrees', hint: 'por convención, <checkout>-wt' },
-      assignee: { label: 'Asignado', hint: 'el login de GitHub cuyos issues vigila' },
+      ghUser: { label: 'Cuenta de GitHub', hint: 'con la que publica issues y PR; sale de la clave SSH del remoto' },
+      assignee: { label: 'Asignado', hint: 'el login de GitHub cuyos issues vigila; por defecto, la cuenta' },
       reviewer: { label: 'Revisor', hint: 'a quién se le piden las revisiones' },
     },
   },

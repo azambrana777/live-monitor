@@ -17,6 +17,7 @@ import { record as recordSpan, openPhaseOf } from './metrics.js';
 import { SUBAGENT_TOOLS } from './subagentgate.js';
 import { createSealNet, REPORT_SETTLE_MS } from './sealnet.js';
 import { boardPluginPath } from './boardplugin.js';
+import { ghEnvAt } from './gh-account.js';
 
 // The cost a session had reached at its last result, by session id. The SDK's
 // `total_cost_usd` is cumulative and continues from the transcript on resume,
@@ -307,6 +308,10 @@ export function sessionOptions({
 }) {
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
+  // The GitHub account of the project this session works in, so a `gh` the
+  // agent runs answers as that account (`gh-account.js`). Local sessions only:
+  // a runner's CLI never receives this machine's tokens (`spawnClaude`).
+  if (!machine || machine.kind === 'local') Object.assign(env, ghEnvAt(cwd));
   if (overlay) {
     const carriesCredential = 'ANTHROPIC_API_KEY' in overlay || 'ANTHROPIC_AUTH_TOKEN' in overlay;
     const toLoopback = isLoopbackUrl(overlay.ANTHROPIC_BASE_URL);

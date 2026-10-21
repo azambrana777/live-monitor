@@ -10,6 +10,7 @@ import { detectRepo } from './repo-identity.js';
 import { DEFAULT_PROJECT_ID } from './keys.js';
 import { requireProject } from './machine.js';
 import { projectOf, baseBranchOf, LOGIN_RE } from './projects.js';
+import { ghEnvFor } from './gh-account.js';
 
 /**
  * Every exported function here talks to exactly one GitHub repository, and
@@ -190,6 +191,18 @@ let ghRun = run;
 export function _setGhRunner(fn) { ghRun = fn ?? run; }
 
 /**
+ * Runs `gh` for one project through `runner`. A project that declares
+ * `ghUser` gets that account's token in `GH_TOKEN` (`gh-account.js`), so `gh`
+ * answers as it whatever the active account is; for any other project the
+ * call goes through exactly as it is written, options untouched.
+ */
+function ghFor(projectId, runner, args, ...rest) {
+  const env = ghEnvFor(projectId);
+  if (env) rest[0] = { ...rest[0], env: { ...rest[0]?.env, ...env } };
+  return runner('gh', args, ...rest);
+}
+
+/**
  * Exported for tests only: forgets what `repo()` resolved, for one project or
  * for all of them. Production code never needs this — a remote does not move
  * mid-process — but a test that changes what a project points at does.
@@ -205,7 +218,7 @@ export function forgetRepoCache(projectId) {
 const GH_TIMEOUT_MS = 60_000;
 
 async function issueList(state, limit, projectId) {
-  const r = await run('gh', [
+  const r = await ghFor(projectId, run, [
     'issue', 'list', '-R', repo(projectId),
     '--assignee', assigneeOf(projectId),
     '--state', state,
@@ -236,7 +249,7 @@ export function listClosedAssignedIssues(limit = 12, projectId) {
 
 export async function getIssue(number, projectId) {
   requireProject(projectId, 'getIssue');
-  const r = await run('gh', [
+  const r = await ghFor(projectId, run, [
     'issue', 'view', String(number), '-R', repo(projectId),
     '--json', 'number,title,body,labels,url,state',
   ]);
@@ -384,7 +397,7 @@ export async function issueStates(numbers, projectId) {
   requireProject(projectId, 'issueStates');
   const merged = new Map();
   for (const query of issueStatesQueries(numbers, projectId)) {
-    const r = await run('gh', ['api', 'graphql', '-f', `query=${query}`], { timeoutMs: 60_000 });
+    const r = await ghFor(projectId, run, ['api', 'graphql', '-f', `query=${query}`], { timeoutMs: 60_000 });
     const rows = parseIssueStates(r.stdout);
     if (!rows) {
       const why = String(r.stderr ?? '').trim().split('\n').pop()?.trim() || `exit ${r.code}`;
@@ -411,7 +424,7 @@ export class GhUnavailableError extends Error {
  */
 export async function linkedPullRequests(number, projectId) {
   requireProject(projectId, 'linkedPullRequests');
-  const r = await run('gh', [
+  const r = await ghFor(projectId, run, [
     'issue', 'view', String(number), '-R', repo(projectId),
     '--json', 'closedByPullRequestsReferences',
   ], { timeoutMs: GH_TIMEOUT_MS });
@@ -432,7 +445,7 @@ export async function linkedPullRequests(number, projectId) {
   return Promise.all(own.map(async (p) => {
     let extra = known.find((pr) => pr.number === p.number);
     if (!extra) {
-      const detail = await run('gh', [
+      const detail = await ghFor(projectId, run, [
         'pr', 'view', String(p.number), '-R', repo(projectId),
         '--json', 'title,state,isDraft,url,createdAt,mergedAt,closedAt',
       ]);
@@ -468,12 +481,12 @@ async function allPullRequests(projectId) {
   const cached = prCache.get(r);
   if (cached && Date.now() - cached.at < PR_TTL_MS) return cached.list;
   // Concurrent misses (classification runs several tasks at once) share one call.
-  return shared(prInflight, r, () => fetchAllPullRequests(r));
+  return shared(prInflight, r, () => fetchAllPullRequests(r, projectId));
 }
 
-async function fetchAllPullRequests(r) {
+async function fetchAllPullRequests(r, projectId) {
   const cached = prCache.get(r);
-  const result = await run('gh', [
+  const result = await ghFor(projectId, run, [
     'pr', 'list', '-R', r, '--state', 'all', '--limit', '200',
     '--json', 'number,title,headRefName,url,state,isDraft,createdAt,mergedAt,closedAt',
   ], { timeoutMs: 2 * 60 * 1000 });
@@ -558,7 +571,7 @@ export async function prsForBranch(branch, { cache = false, project } = {}) {
     // out to someone else.
     if (hit && Date.now() - hit.at < PR_BRANCH_TTL_MS) return hit.list.map((p) => ({ ...p }));
   }
-  const r = await run('gh', [
+  const r = await ghFor(project, run, [
     'pr', 'list', '-R', repo(project), '--head', bare, '--state', 'all', '--limit', '30',
     '--json', 'number,url,title,state,isDraft,createdAt,mergedAt,closedAt',
   ], { timeoutMs: GH_TIMEOUT_MS });
@@ -608,7 +621,7 @@ export async function createDraftPr({ branch, title, body, project }) {
   const bodyFile = path.join(dir, 'pr-body.md');
   writeFileSync(bodyFile, body, 'utf8');
   try {
-    const r = await ghRun('gh', [
+    const r = await ghFor(project, ghRun, [
       'pr', 'create', '--draft', '-R', repo(project),
       '--base', baseBranchOf(project), '--head', branch,
       '--title', title, '--body-file', bodyFile,
@@ -629,7 +642,7 @@ export async function createDraftPr({ branch, title, body, project }) {
  */
 export async function prView(number, projectId) {
   requireProject(projectId, 'prView');
-  const r = await run('gh', [
+  const r = await ghFor(projectId, run, [
     'pr', 'view', String(number), '-R', repo(projectId), '--json', 'number,state,isDraft,author',
   ]);
   if (!r.ok) throw new Error(`gh pr view ${number} failed: ${r.stderr}`);
@@ -658,7 +671,7 @@ export async function issueReopenInfo(issue, projectId) {
         nodes { ... on ReopenedEvent { createdAt } }
       }
     } } }`;
-  const r = await run('gh', ['api', 'graphql', '-f', `query=${query}`], { timeoutMs: GH_TIMEOUT_MS });
+  const r = await ghFor(projectId, run, ['api', 'graphql', '-f', `query=${query}`], { timeoutMs: GH_TIMEOUT_MS });
   if (!r.ok) throw new Error(`gh api graphql (reopened event of #${issue}) failed: ${r.stderr}`);
   let data;
   try {
@@ -677,7 +690,7 @@ export async function issueReopenInfo(issue, projectId) {
  */
 export async function readyPr(number, projectId) {
   requireProject(projectId, 'readyPr');
-  const r = await ghRun('gh', ['pr', 'ready', String(number), '-R', repo(projectId)]);
+  const r = await ghFor(projectId, ghRun, ['pr', 'ready', String(number), '-R', repo(projectId)]);
   if (!r.ok) throw new Error(`gh pr ready failed: ${r.stderr}`);
 }
 
@@ -691,7 +704,7 @@ export async function addReviewer(number, projectId, login) {
   needProject(projectId, 'addReviewer');
   // Resolved first: with nobody to ask, `gh` is never called.
   const reviewer = reviewerOrThrow(projectId, login);
-  const r = await ghRun('gh', [
+  const r = await ghFor(projectId, ghRun, [
     'pr', 'edit', String(number), '-R', repo(projectId),
     '--add-reviewer', reviewer,
   ]);
@@ -706,9 +719,9 @@ export async function markPrReady(prNumber, projectId, login) {
   requireProject(projectId, 'markPrReady');
   // Before the first write: a PR must not be left ready with nobody to review it.
   const reviewer = reviewerOrThrow(projectId, login);
-  const ready = await ghRun('gh', ['pr', 'ready', String(prNumber), '-R', repo(projectId)]);
+  const ready = await ghFor(projectId, ghRun, ['pr', 'ready', String(prNumber), '-R', repo(projectId)]);
   if (!ready.ok) throw new Error(`gh pr ready failed: ${ready.stderr}`);
-  const review = await ghRun('gh', [
+  const review = await ghFor(projectId, ghRun, [
     'pr', 'edit', String(prNumber), '-R', repo(projectId),
     '--add-reviewer', reviewer,
   ]);
@@ -815,7 +828,8 @@ export async function searchRepoUsers(query, { authorLogin = null, excludeLogin 
   if (!users) {
     let pending = usersInflight.get(repoName);
     if (!pending) {
-      pending = loadRepoUsers(runner, repoName, now).finally(() => usersInflight.delete(repoName));
+      const asProject = (_file, args, ...rest) => ghFor(project, runner, args, ...rest);
+      pending = loadRepoUsers(asProject, repoName, now).finally(() => usersInflight.delete(repoName));
       usersInflight.set(repoName, pending);
     }
     users = await pending;
@@ -894,7 +908,7 @@ export async function checksForOpenPrs({ force = false, project } = {}) {
   const r = repo(project);
   const cached = checksCache.get(r);
   if (!force && cached && Date.now() - cached.at < CHECKS_TTL_MS) return cached.byNumber;
-  const result = await run('gh', [
+  const result = await ghFor(project, run, [
     'pr', 'list', '-R', r, '--state', 'open', '--limit', '100',
     '--json', 'number,headRefOid,isDraft,statusCheckRollup',
   ], { timeoutMs: 2 * 60 * 1000 });
@@ -936,8 +950,8 @@ export async function getChangeRequests(prNumber, projectId) {
   // `pull_request_review_id`, so the two never match and every change request
   // would silently come back with no comments at all.
   const [meta, reviews] = await Promise.all([
-    run('gh', ['pr', 'view', String(prNumber), '-R', repo(projectId), '--json', 'reviewDecision,headRefOid'], { timeoutMs: GH_TIMEOUT_MS }),
-    run('gh', ['api', `repos/${repo(projectId)}/pulls/${prNumber}/reviews`, '--paginate'], { timeoutMs: GH_TIMEOUT_MS }),
+    ghFor(projectId, run, ['pr', 'view', String(prNumber), '-R', repo(projectId), '--json', 'reviewDecision,headRefOid'], { timeoutMs: GH_TIMEOUT_MS }),
+    ghFor(projectId, run, ['api', `repos/${repo(projectId)}/pulls/${prNumber}/reviews`, '--paginate'], { timeoutMs: GH_TIMEOUT_MS }),
   ]);
   if (!meta.ok) throw new Error(`gh pr view failed: ${meta.stderr}`);
   if (!reviews.ok) throw new Error(`gh api pulls/${prNumber}/reviews failed: ${reviews.stderr}`);
@@ -984,7 +998,7 @@ export async function getChangeRequests(prNumber, projectId) {
 }
 
 async function reviewComments(prNumber, projectId) {
-  const r = await run('gh', ['api', `repos/${repo(projectId)}/pulls/${prNumber}/comments`, '--paginate']);
+  const r = await ghFor(projectId, run, ['api', `repos/${repo(projectId)}/pulls/${prNumber}/comments`, '--paginate']);
   if (!r.ok) return [];
   try {
     return JSON.parse(r.stdout).map((c) => ({
@@ -1008,7 +1022,7 @@ async function reviewThreads(prNumber, projectId) {
       reviewThreads(first: 100) {
         nodes { id isResolved comments(first: 100) { nodes { databaseId } } }
       } } } }`;
-  const r = await run('gh', ['api', 'graphql', '-f', `query=${query}`]);
+  const r = await ghFor(projectId, run, ['api', 'graphql', '-f', `query=${query}`]);
   if (!r.ok) return [];
   try {
     return JSON.parse(r.stdout).data.repository.pullRequest.reviewThreads.nodes.map((t) => ({
@@ -1041,7 +1055,7 @@ export async function replyToReviewThread(threadId, body, projectId) {
   // quotes and newlines that would break an interpolated query — and as a raw
   // field (`-f`), not a typed one: `-F` would read a reply starting with
   // "@someone" as a filename and a numeric one as a number.
-  const r = await run('gh', [
+  const r = await ghFor(projectId, run, [
     'api', 'graphql',
     '-f', 'query=mutation($thread: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $thread, body: $body}) { comment { url } } }',
     '-f', `thread=${threadId}`,
@@ -1066,7 +1080,7 @@ export async function commentOnPr(prNumber, body, projectId) {
   const file = path.join(dir, 'comment.md');
   writeFileSync(file, body, 'utf8');
   try {
-    const r = await run('gh', ['pr', 'comment', String(prNumber), '-R', repo(projectId), '--body-file', file]);
+    const r = await ghFor(projectId, run, ['pr', 'comment', String(prNumber), '-R', repo(projectId), '--body-file', file]);
     if (!r.ok) throw new Error(`gh pr comment failed: ${r.stderr}`);
     return r.stdout.trim().split(/\r?\n/).pop();
   } finally {
@@ -1087,13 +1101,13 @@ export async function requestReviewForChangeRequest(prNumber, changeRequest, pro
   // project's, which is what `-R` below is for.
   const failures = [];
   for (const threadId of changeRequest.threadIds ?? []) {
-    const r = await run('gh', ['api', 'graphql', '-f',
+    const r = await ghFor(projectId, run, ['api', 'graphql', '-f',
       `query=mutation { resolveReviewThread(input: {threadId: "${threadId}"}) { thread { isResolved } } }`]);
     if (!r.ok) failures.push(`${threadId}: ${r.stderr.trim().split('\n').pop()}`);
   }
 
   const reviewer = changeRequest.author;
-  const req = await run('gh', [
+  const req = await ghFor(projectId, run, [
     'pr', 'edit', String(prNumber), '-R', repo(projectId), '--add-reviewer', reviewer,
   ]);
   if (!req.ok) throw new Error(`could not request review again from ${reviewer}: ${req.stderr}`);
@@ -1262,7 +1276,7 @@ export function closeIssueArgs({ issue, reason, duplicateOf = null, repo, target
  */
 export async function issueComments(number, projectId) {
   requireProject(projectId, 'issueComments');
-  const r = await run('gh', [
+  const r = await ghFor(projectId, run, [
     'api', `repos/${repo(projectId)}/issues/${Number(number)}/comments`,
     '--paginate', '--slurp',
   ]);
@@ -1286,38 +1300,40 @@ export async function issueComments(number, projectId) {
   }));
 }
 
-// The login `gh` is authenticated as. It is a property of the machine's `gh`,
-// not of the project, so one answer serves every project.
+// The login `gh` is authenticated as for a project: its `ghUser`'s, or the
+// machine's active account for every project that declares none. Keyed by that
+// account, so projects sharing one share the answer and no project is told
+// another's.
 //
 // ONLY SUCCESS is cached, unlike `repoCache` above, which caches the Error too:
 // a broken `origin` stays broken, but a transient failure of `gh api user` is
 // over in a second, and caching it would block every issue closing until
 // somebody restarts the board.
-let currentLoginPromise = null;
+const currentLoginPromises = new Map();
 
 /**
- * The login the board publishes as. Cached for the life of the process on
- * success, retried after a failure.
+ * The login the board publishes as for a project. Cached for the life of the
+ * process on success, retried after a failure.
  *
- * @param {string} [projectId] validated for the uniform signature; the call
- *   itself carries no repository.
+ * @param {string} [projectId]
  * @returns {Promise<string>}
  */
 export async function currentLogin(projectId) {
   requireProject(projectId, 'currentLogin');
-  registryEntry(projectId);
-  if (currentLoginPromise) return currentLoginPromise;
+  const account = registryEntry(projectId).ghUser ?? '';
+  const cached = currentLoginPromises.get(account);
+  if (cached) return cached;
   const attempt = (async () => {
-    const r = await run('gh', ['api', 'user', '--jq', '.login']);
+    const r = await ghFor(projectId, ghRun, ['api', 'user', '--jq', '.login']);
     if (!r.ok) throw new Error(`gh api user failed: ${r.stderr}`);
     const login = r.stdout.trim();
     if (!login) throw new Error('gh api user returned no login: cannot tell which account publishes');
     return login;
   })();
-  currentLoginPromise = attempt;
+  currentLoginPromises.set(account, attempt);
   // Forget the failure so the next caller tries again; this handler also keeps
   // the rejection from being an unhandled one when nobody is awaiting yet.
-  attempt.catch(() => { if (currentLoginPromise === attempt) currentLoginPromise = null; });
+  attempt.catch(() => { if (currentLoginPromises.get(account) === attempt) currentLoginPromises.delete(account); });
   return attempt;
 }
 
@@ -1349,7 +1365,7 @@ export async function repoLabels(projectId) {
   const copy = (list) => list.map((l) => ({ ...l }));
   if (hit && Date.now() - hit.at < LABELS_TTL_MS) return copy(hit.list);
 
-  const result = await run('gh', [
+  const result = await ghFor(projectId, run, [
     'label', 'list', '-R', r, '--limit', '200', '--json', 'name,color,description',
   ]);
   if (!result.ok) {
@@ -1390,7 +1406,7 @@ export async function repoLabels(projectId) {
  */
 export async function issueOrPrRef(number, projectId) {
   requireProject(projectId, 'issueOrPrRef');
-  const r = await run('gh', ['api', `repos/${repo(projectId)}/issues/${Number(number)}`]);
+  const r = await ghFor(projectId, run, ['api', `repos/${repo(projectId)}/issues/${Number(number)}`]);
   if (!r.ok) {
     if (/HTTP 404/.test(r.stderr)) return null;
     throw new Error(`gh api issues/${number} failed: ${r.stderr}`);
@@ -1464,12 +1480,12 @@ export async function publishIssueComment(issue, body, { commentId = null, proje
   writeFileSync(file, full, 'utf8');
   try {
     const r = target
-      ? await run('gh', [
+      ? await ghFor(project, run, [
         'api', '-X', 'PATCH',
         `repos/${repo(project)}/issues/comments/${target.id}`,
         '-F', `body=@${file}`,
       ])
-      : await run('gh', [
+      : await ghFor(project, run, [
         'api', '-X', 'POST',
         `repos/${repo(project)}/issues/${Number(issue)}/comments`,
         '-F', `body=@${file}`,
@@ -1545,7 +1561,7 @@ export async function addIssueLabels(issue, labels, projectId) {
   const names = wanted.map((l) => bySpelling.get(l.toLowerCase()));
   const args = ['issue', 'edit', String(issue), '-R', repo(projectId)];
   for (const name of names) args.push('--add-label', name);
-  const r = await run('gh', args);
+  const r = await ghFor(projectId, run, args);
   if (!r.ok) throw new Error(`gh issue edit --add-label failed: ${r.stderr}`);
   return names;
 }
@@ -1576,7 +1592,7 @@ export async function closeIssue(issue, { reason, duplicateOf = null, targetIsPr
   const args = closeIssueArgs({ issue, reason, duplicateOf, repo: repo(project), targetIsPr });
   const before = await getIssue(issue, project);
   const alreadyClosed = String(before.state ?? '').toUpperCase() === 'CLOSED';
-  const r = await run('gh', args);
+  const r = await ghFor(project, run, args);
   // Read back before judging: `gh issue close` against an issue somebody else
   // has just closed is a failure that changed nothing, and the board wants the
   // state, not the exit code.

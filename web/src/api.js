@@ -157,6 +157,12 @@ export const api = {
   // default list. Removing it only unregisters; its data stays on disk.
   setProjectRestricted: (id, restricted) => send(`/api/projects/${encodeURIComponent(id)}/restricted`, { restricted: !!restricted }),
   removeProject: (id) => send(`/api/projects/${encodeURIComponent(id)}`, undefined, 'DELETE'),
+  // The GitHub accounts `gh` has a session for, and the one a project works
+  // as (`null`: the active account). The answer may carry `warnings`.
+  ghAccounts: (repoPath = null) => get(`/api/gh-accounts${repoPath ? `?repoPath=${encodeURIComponent(repoPath)}` : ''}`),
+  setProjectGhAccount: (id, ghUser, assignee) => send(`/api/projects/${encodeURIComponent(id)}/gh-account`, {
+    ghUser, ...(assignee ? { assignee } : {}),
+  }),
   // Walking the board machine's disk to find that checkout. Without a path it
   // answers the roots; every entry carries its own absolute path, so nobody
   // here ever joins a name to a folder. Only loopback may ask: from a phone it
@@ -199,6 +205,7 @@ export const api = {
   setApprovePlan: (project, issue, mode) => send(`${T(project, issue)}/approve-plan`, { mode }),
   // «Cerrar huecos»: 'auto' | 'on' | 'off', like the plan switch.
   setFixGaps: (project, issue, mode) => send(`${T(project, issue)}/fix-gaps`, { mode }),
+  setFullTests: (project, issue, mode) => send(`${T(project, issue)}/full-tests`, { mode }),
   setDesign: (project, issue, on) => send(`${T(project, issue)}/design`, { on }),
   // Model and effort per role, for the board's «Modelos» section.
   tuning: () => get('/api/tuning'),
