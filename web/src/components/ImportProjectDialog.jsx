@@ -47,13 +47,14 @@ function asked(data) {
   return out;
 }
 
-export default function ImportProjectDialog({ onClose, onImported }) {
+export default function ImportProjectDialog({ onClose, onImported, defaultAssignee = null }) {
   const t = useStrings();
   const [repoPath, setRepoPath] = useState('');
   const [answers, setAnswers] = useState({});
   // The fields the server asked about, so they are shown even when folded.
   const [askedFields, setAskedFields] = useState([]);
-  const [open, setOpen] = useState(false);
+  // Folded unless the board has no default assignee: then that field is the one thing a person may have to fill in.
+  const [open, setOpen] = useState(!defaultAssignee);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);       // the server's own words
   const [problems, setProblems] = useState([]);   // a list, when it sent one
@@ -99,6 +100,8 @@ export default function ImportProjectDialog({ onClose, onImported }) {
     }, 400);
     return () => clearTimeout(timer);
   }, [open, path]);
+  // The server falls back to the project's account, then to the board's default; with neither, the assignee must be typed.
+  const assigneeRequired = !defaultAssignee && !(answers.ghUser ?? '').trim();
   const set = (field, value) => setAnswers((a) => ({ ...a, [field]: value }));
 
   // Navigating by the `path` the server gave for that entry — never by
@@ -169,6 +172,14 @@ export default function ImportProjectDialog({ onClose, onImported }) {
   // this dialog does not know about — it still gets an input.
   const rows = [...OPTIONAL, ...askedFields.filter((f) => f !== 'repoPath' && !OPTIONAL.includes(f))]
     .map((f) => [f, t.topbar.importProject.fields[f]?.label ?? f, t.topbar.importProject.fields[f]?.hint ?? null]);
+
+  const placeholderOf = (field) => {
+    if (field === 'assignee' && defaultAssignee) return defaultAssignee;
+    if (field === 'assignee' && assigneeRequired) return t.topbar.importProject.required;
+    return askedFields.includes(field) ? t.topbar.importProject.couldNotDeduce : t.topbar.importProject.deduces;
+  };
+  // With a board default, the hint says what an empty field will use.
+  const hintOf = (field, hint) => (field === 'assignee' && defaultAssignee ? t.topbar.importProject.assigneeDefault : hint);
 
   return (
     <Dialog
@@ -265,16 +276,19 @@ export default function ImportProjectDialog({ onClose, onImported }) {
         <div className="import-fields">
           {rows.map(([field, label, hint]) => (
             <label key={field} className="import-field">
-              <span className="import-field-label">{label}</span>
+              <span className="import-field-label">
+                {label}{field === 'assignee' && assigneeRequired ? ` (${t.topbar.importProject.required})` : ''}
+              </span>
               <input
-                className={`import-input ${askedFields.includes(field) ? 'is-asked' : ''}`}
+                className={`import-input ${askedFields.includes(field) || (field === 'assignee' && assigneeRequired) ? 'is-asked' : ''}`}
                 spellCheck={false}
                 list={field === 'ghUser' && accounts.length ? 'import-gh-accounts' : undefined}
                 value={answers[field] ?? ''}
                 onChange={(e) => set(field, e.target.value)}
-                placeholder={askedFields.includes(field) ? t.topbar.importProject.couldNotDeduce : t.topbar.importProject.deduces}
+                aria-required={field === 'assignee' && assigneeRequired ? true : undefined}
+                placeholder={placeholderOf(field)}
               />
-              {hint && <span className="import-field-hint">{hint}</span>}
+              {hintOf(field, hint) && <span className="import-field-hint">{hintOf(field, hint)}</span>}
             </label>
           ))}
           {accounts.length > 0 && (

@@ -248,6 +248,8 @@ export default {
     deduced: 'What the board works out',
     couldNotDeduce: 'the board could not work it out',
     deduces: 'worked out automatically',
+    required: 'required',
+    assigneeDefault: 'used when left empty',
     warnings: 'Imported. Before the first push, check:',
     understood: 'Got it',
     fields: {

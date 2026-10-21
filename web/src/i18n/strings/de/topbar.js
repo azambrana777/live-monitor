@@ -248,6 +248,8 @@ export default {
     deduced: 'Was das Board ableitet',
     couldNotDeduce: 'das Board konnte es nicht ableiten',
     deduces: 'wird abgeleitet',
+    required: 'erforderlich',
+    assigneeDefault: 'wird verwendet, wenn das Feld leer bleibt',
     warnings: 'Importiert. Vor dem ersten Push prüfen:',
     understood: 'Verstanden',
     fields: {

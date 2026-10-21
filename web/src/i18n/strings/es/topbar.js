@@ -251,6 +251,8 @@ export default {
     deduced: 'Lo que el tablero deduce',
     couldNotDeduce: 'el tablero no pudo deducirlo',
     deduces: 'se deduce',
+    required: 'obligatorio',
+    assigneeDefault: 'se usa este si lo dejas vacío',
     warnings: 'Importado. Antes del primer push, revisa:',
     understood: 'Entendido',
     fields: {

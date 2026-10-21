@@ -248,6 +248,8 @@ export default {
     deduced: 'Ce que le tableau déduit',
     couldNotDeduce: 'le tableau n’a pas pu le déduire',
     deduces: 'déduit automatiquement',
+    required: 'obligatoire',
+    assigneeDefault: 'utilisé si le champ reste vide',
     warnings: 'Importé. Avant le premier push, vérifiez :',
     understood: 'Compris',
     fields: {
