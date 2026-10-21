@@ -3,6 +3,7 @@ import Dialog from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { api } from '../api.js';
 import { useStrings } from '../i18n/useStrings.js';
+import { accountWarningText, accountLabel } from './ManageProjectsDialog.jsx';
 
 /**
  * Importing a project: one obligatory field, the local checkout's path.
@@ -19,7 +20,7 @@ import { useStrings } from '../i18n/useStrings.js';
  */
 
 /** The parts of a `Project` a person can answer for. `repoPath` is the field above. Labels and hints are in the catalog. */
-const OPTIONAL = ['id', 'name', 'repo', 'worktreeRoot', 'assignee', 'reviewer'];
+const OPTIONAL = ['id', 'name', 'repo', 'worktreeRoot', 'ghUser', 'assignee', 'reviewer'];
 
 /**
  * What the server says it still needs, whichever way it says it: a list of
@@ -56,6 +57,9 @@ export default function ImportProjectDialog({ onClose, onImported }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);       // the server's own words
   const [problems, setProblems] = useState([]);   // a list, when it sent one
+  // Imported, but with what stands between it and its GitHub account (no gh
+  // session, a remote that pushes as somebody else): shown before closing.
+  const [imported, setImported] = useState(null);
   // The folder browser, offered only where the board itself runs. `here` is
   // the listing being shown: `{ path, parent, entries, truncated }`.
   const [canBrowse, setCanBrowse] = useState(false);
@@ -78,6 +82,23 @@ export default function ImportProjectDialog({ onClose, onImported }) {
   }, []);
 
   const path = repoPath.trim();
+
+  // The accounts `gh` has a session for, offered as suggestions for the
+  // project's account; the field still takes any login. Asked with the path
+  // typed so far, since that checkout's own email names the account it pushes
+  // as — on a first import it is the only place that email is known. Only
+  // while the fields are shown, and once the typing pauses.
+  const [accounts, setAccounts] = useState([]);
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const timer = setTimeout(() => {
+      api.ghAccounts(path || null).then(
+        (r) => { if (alive.current && Array.isArray(r?.accounts)) setAccounts(r.accounts); },
+        () => {},
+      );
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [open, path]);
   const set = (field, value) => setAnswers((a) => ({ ...a, [field]: value }));
 
   // Navigating by the `path` the server gave for that entry — never by
@@ -106,7 +127,7 @@ export default function ImportProjectDialog({ onClose, onImported }) {
   };
 
   const submit = async () => {
-    if (!path || busy) return;
+    if (!path || busy || imported) return;
     setBusy(true);
     setError(null);
     setProblems([]);
@@ -118,7 +139,13 @@ export default function ImportProjectDialog({ onClose, onImported }) {
       }
       const created = await api.createProject(body);
       if (!alive.current) return;
-      onImported(created?.project ?? created);
+      const { warnings, ...project } = created?.project ?? created ?? {};
+      if (Array.isArray(warnings) && warnings.length) {
+        setImported(project);
+        setProblems(warnings.map((w) => accountWarningText(t, w)).filter(Boolean));
+        return;
+      }
+      onImported(project);
     } catch (e) {
       if (!alive.current) return;
       setError(e.message);
@@ -151,10 +178,16 @@ export default function ImportProjectDialog({ onClose, onImported }) {
         <>
           <span className="modal-caption">{t.topbar.importProject.footerNote}</span>
           <span className="modal-spacer" />
-          <button className="btn btn-ghost btn-md" onClick={onClose} disabled={busy}>{t.topbar.importProject.leave}</button>
-          <button className="btn btn-primary btn-md" disabled={!path || busy} onClick={submit}>
-            {busy ? t.topbar.importProject.submitting : t.topbar.importProject.submit}
-          </button>
+          {imported ? (
+            <button className="btn btn-primary btn-md" onClick={() => onImported(imported)}>{t.topbar.importProject.understood}</button>
+          ) : (
+            <>
+              <button className="btn btn-ghost btn-md" onClick={onClose} disabled={busy}>{t.topbar.importProject.leave}</button>
+              <button className="btn btn-primary btn-md" disabled={!path || busy} onClick={submit}>
+                {busy ? t.topbar.importProject.submitting : t.topbar.importProject.submit}
+              </button>
+            </>
+          )}
         </>
       )}
     >
@@ -236,6 +269,7 @@ export default function ImportProjectDialog({ onClose, onImported }) {
               <input
                 className={`import-input ${askedFields.includes(field) ? 'is-asked' : ''}`}
                 spellCheck={false}
+                list={field === 'ghUser' && accounts.length ? 'import-gh-accounts' : undefined}
                 value={answers[field] ?? ''}
                 onChange={(e) => set(field, e.target.value)}
                 placeholder={askedFields.includes(field) ? t.topbar.importProject.couldNotDeduce : t.topbar.importProject.deduces}
@@ -243,10 +277,16 @@ export default function ImportProjectDialog({ onClose, onImported }) {
               {hint && <span className="import-field-hint">{hint}</span>}
             </label>
           ))}
+          {accounts.length > 0 && (
+            <datalist id="import-gh-accounts">
+              {accounts.map((a) => <option key={a.login} value={a.login} label={accountLabel(t, a)} />)}
+            </datalist>
+          )}
         </div>
       )}
 
       {error && <p className="import-error" aria-live="polite">{error}</p>}
+      {imported && <p className="import-error" aria-live="polite">{t.topbar.importProject.warnings}</p>}
       {problems.length > 0 && (
         <ul className="import-problems">
           {problems.map((p, i) => <li key={i}>{p}</li>)}

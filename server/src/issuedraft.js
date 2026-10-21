@@ -12,6 +12,7 @@ import { assertNoUpgradeRunning } from './upgrade.js';
 import { machineOf } from './machine.js';
 import { configFor } from './projects.js';
 import { repo, assigneeOf } from './github.js';
+import { ghEnvFor } from './gh-account.js';
 import { ghPublishProblems } from './ghgate.js';
 import { holderKey } from './projectchats.js';
 import { chatTranscriptOf, ghGateHooks, noGitHubWriteHooks, mergeHooks } from './pipeline.js';
@@ -128,9 +129,11 @@ export async function createIssueFromDraft(holder, chatId, { title, body } = {})
 
   let repoName;
   let assignee;
+  let account;
   try {
     repoName = repo(holder.project);
     assignee = assigneeOf(holder.project);
+    account = ghEnvFor(holder.project);
   } catch (e) {
     throw httpError(400, e.message);
   }
@@ -155,7 +158,7 @@ export async function createIssueFromDraft(holder, chatId, { title, body } = {})
     if (problems.length) {
       throw httpError(400, `The board does not publish this:${problems.join('; ')}`, { problems });
     }
-    const r = await (issueDraftHooks.gh ?? run)('gh', args, { timeoutMs: 60_000 });
+    const r = await (issueDraftHooks.gh ?? run)('gh', args, account ? { timeoutMs: 60_000, env: account } : { timeoutMs: 60_000 });
     if (!r?.ok) {
       throw httpError(502, `gh could not create the issue: ${String(r?.stderr || r?.stdout || 'no output').trim().slice(0, 400)}`);
     }

@@ -1,5 +1,6 @@
 import { machineFor, requireProject } from './machine.js';
 import { shared } from './inflight.js';
+import { assertPushIdentity } from './gh-account.js';
 
 /**
  * Git on a task's worktree. Every function takes the `Machine` the worktree
@@ -398,6 +399,9 @@ export async function commitSubject(machine, wtPath, { base = DEFAULT_BASE, rang
  * leaves room for a slow upload over the tailnet.
  */
 export async function pushBranch(machine, wtPath, branch, { onLine } = {}) {
+  // Pushed as the project's GitHub account, or not at all (`gh-account.js`).
+  // Only a local worktree can be asked; a runner's paths are not this machine's.
+  if (machine.kind === 'local') await assertPushIdentity(wtPath);
   const r = await machine.exec('git', ['push', '-u', 'origin', branch], {
     cwd: wtPath, onLine, timeoutMs: 3 * 60 * 1000, env: { GIT_TERMINAL_PROMPT: '0' },
   });
