@@ -19,8 +19,9 @@ import { useStrings } from '../../i18n/useStrings.js';
  * @param {boolean} props.updatesDisabled the check button waits (check running, offer or upgrade dialog open)
  * @param {() => void} props.onCheckUpdates
  * @param {(project: object) => void} [props.onImported]
+ * @param {string|null} [props.defaultAssignee] the board's default assignee, shown by the import dialog
  */
-export default function MoreMenu({ checkingUpdates, updatesDisabled, onCheckUpdates, onImported }) {
+export default function MoreMenu({ checkingUpdates, updatesDisabled, onCheckUpdates, onImported, defaultAssignee }) {
   const t = useStrings();
   const pop = usePopover();
   const { close } = pop;
@@ -54,7 +55,7 @@ export default function MoreMenu({ checkingUpdates, updatesDisabled, onCheckUpda
       </Popover>
       {/* Always mounted and never disabled: a restart is askable at any moment. */}
       <RestartControl variant="menu" slot={pop.open ? slot : null} onPicked={close} onEngagedChange={onEngaged} />
-      {importing && <ImportProjectDialog onClose={() => setImporting(false)} onImported={(p) => { setImporting(false); onImported?.(p); }} />}
+      {importing && <ImportProjectDialog defaultAssignee={defaultAssignee} onClose={() => setImporting(false)} onImported={(p) => { setImporting(false); onImported?.(p); }} />}
     </>
   );
 }

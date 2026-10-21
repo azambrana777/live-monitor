@@ -540,6 +540,14 @@ app.post('/api/projects', async (req, res) => {
       if (rest.overrides && !requested) toSave.overrides = rest.overrides;
       for (const k of ['noReviewer', 'design']) if (rest[k] !== undefined) toSave[k] = rest[k];
     }
+    // The poller picks issues up by assignee, so a project without one would never
+    // start a task: ask for it here instead of surfacing the registry's validation.
+    if (!pickText(toSave.assignee)) {
+      return res.status(400).json({
+        error: 'assignee is required: fill it in, or set github.assignee in config.local.json',
+        missing: ['assignee'],
+      });
+    }
     const saved = saveProjects([...listProjects(), toSave]);
     forgetRemovedProject({ id: entry.id, repoPath });
     broadcast({ type: 'snapshot', ...snapshot() });

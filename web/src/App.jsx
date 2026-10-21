@@ -1004,7 +1004,7 @@ export default function App() {
         }}
         moreMenu={{
           checkingUpdates, updatesDisabled: checkingUpdates || offerOpen || upgradeDialog,
-          onCheckUpdates: checkForUpdates, onImported: projectImported,
+          onCheckUpdates: checkForUpdates, onImported: projectImported, defaultAssignee: meta.github?.assignee ?? null,
         }}
         machines={machines} machineStatus={machineStatus} onOpenMetrics={() => setMetricsOpen(true)}
         gitRefresh={{ busy: refreshingGit, run: runGitRefresh }}
@@ -1169,7 +1169,7 @@ export default function App() {
 
       {modelsOpen && <ModelsDialog onClose={() => setModelsOpen(false)} />}
       {importOpen && (
-        <ImportProjectDialog onClose={() => setImportOpen(false)} onImported={(p) => { setImportOpen(false); projectImported(p); }} />
+        <ImportProjectDialog defaultAssignee={meta.github?.assignee ?? null} onClose={() => setImportOpen(false)} onImported={(p) => { setImportOpen(false); projectImported(p); }} />
       )}
       {manageOpen && (
         <ManageProjectsDialog
