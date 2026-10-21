@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { removeTree, tempDir } from './teardown.mjs';
 
 /**
@@ -118,4 +118,14 @@ test('github.assignee configured: an empty assignee falls back to it', async () 
   assert.equal(r.status, 201);
   assert.equal(r.body.assignee, 'board-default');
   assert.equal(registry(board)[0].assignee, 'board-default');
+});
+
+test('no assignee configured: the account in the checkout origin URL is used, not a 400', async () => {
+  const board = await startBoard({ repo: 'nobody/nothing-at-all', reviewer: '' });
+  const git = (...args) => execFileSync('git', ['-C', board.checkout, ...args], { stdio: 'ignore' });
+  git('init', '-q');
+  git('remote', 'add', 'origin', 'https://octocat@github.com/octocat/hello.git');
+  const r = await importProject(board, {});
+  assert.equal(r.status, 201);
+  assert.equal(r.body.assignee, 'octocat');
 });
