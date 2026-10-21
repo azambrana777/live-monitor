@@ -2,7 +2,7 @@
 # UTF-8 dash decodes to a curly quote and ends a string early.
 #
 # Exit codes: 0 = the board process is up; 1 = it did not start (or was refused:
-# upgrade lock, already running); 2 = it is up, but npm install or the web build
+# upgrade lock, already running); 2 = it is up, but npm ci or the web build
 # failed, so it runs on whatever web/dist there was.
 param(
   # Skips the upgrade lock: upgrade.ps1 starts the board while it holds it.
@@ -126,12 +126,12 @@ function Invoke-Npm($what, $consequence, [string[]]$npmArgs) {
 
 if (-not (Test-Path (Join-Path $root 'server\node_modules'))) {
   Write-Host 'Instalando dependencias del servidor...'
-  $w = Invoke-Npm 'npm install del servidor' 'el tablero arranca igualmente' @('install', '--prefix', (Join-Path $root 'server'))
+  $w = Invoke-Npm 'npm ci del servidor' 'el tablero arranca igualmente' @('ci', '--prefix', (Join-Path $root 'server'))
   if ($w) { $warnings += $w }
 }
 if (-not (Test-Path (Join-Path $root 'web\node_modules'))) {
   Write-Host 'Instalando dependencias del frontend...'
-  $w = Invoke-Npm 'npm install del frontend' 'el tablero arranca igualmente' @('install', '--prefix', (Join-Path $root 'web'))
+  $w = Invoke-Npm 'npm ci del frontend' 'el tablero arranca igualmente' @('ci', '--prefix', (Join-Path $root 'web'))
   if ($w) { $warnings += $w }
 }
 
