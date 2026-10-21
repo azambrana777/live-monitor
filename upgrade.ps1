@@ -636,6 +636,25 @@ function Step-Commit {
   Set-Step 'laptop_commit' 'ok' "$($script:laptop.commit) $message"
 }
 
+# The push was rejected: origin/main may have moved while the board was being
+# upgraded (a PR merged, another machine's upgrade). Bring it in with a merge,
+# like a person would, so the push can be retried. Returns $null when the
+# branch now contains origin/main, else the reason it could not be done. A
+# conflicting merge is aborted, so the working tree is exactly as it was.
+function Sync-OriginMain {
+  $code = Invoke-Native $script:git @('fetch', 'origin', 'main') $PushTimeoutMs
+  if ($code -ne 0) { return 'could not fetch origin/main' }
+  # Already contains it: the rejection had another cause, a merge would not help.
+  $code = Invoke-Native $script:git @('merge-base', '--is-ancestor', 'origin/main', 'HEAD') -Quiet
+  if ($code -eq 0) { return 'origin/main is already merged' }
+  $code = Invoke-Native $script:git @('merge', '--no-edit', 'origin/main')
+  if ($code -ne 0) {
+    [void](Invoke-Native $script:git @('merge', '--abort') -Quiet)
+    return 'origin/main moved and merging it did not apply cleanly (merge aborted, nothing changed); run git pull in the board checkout, resolve it and push'
+  }
+  return $null
+}
+
 # Never throws: the commit already exists, and nothing about a push may roll
 # it back. Every problem here is a warning.
 function Step-Push {
@@ -650,14 +669,27 @@ function Step-Push {
       Set-Step 'laptop_push' 'warn' $script:laptop.pushError
       return
     }
+    $detail = 'origin main'
     if ($code -ne 0) {
-      $script:laptop.pushed = $false
-      $script:laptop.pushError = "git push exited $code"
-      Set-Step 'laptop_push' 'warn' $script:laptop.pushError
-      return
+      $firstCode = $code
+      $reason = Sync-OriginMain
+      if ($reason) {
+        $script:laptop.pushed = $false
+        $script:laptop.pushError = "git push exited $firstCode; $reason"
+        Set-Step 'laptop_push' 'warn' $script:laptop.pushError
+        return
+      }
+      $code = Invoke-Native $script:git @('push', 'origin', 'main') $PushTimeoutMs
+      if ($script:nativeTimedOut -or $code -ne 0) {
+        $script:laptop.pushed = $false
+        $script:laptop.pushError = "git push exited $firstCode; merged origin/main, but the second push also failed ($code)"
+        Set-Step 'laptop_push' 'warn' $script:laptop.pushError
+        return
+      }
+      $detail = 'origin main (merged origin/main first: it had moved)'
     }
     $script:laptop.pushed = $true
-    Set-Step 'laptop_push' 'ok' 'origin main'
+    Set-Step 'laptop_push' 'ok' $detail
   } catch {
     $script:laptop.pushed = $false
     $script:laptop.pushError = "git push failed: $($_.Exception.Message)"

@@ -21,7 +21,8 @@ import { ROOT, DATA_DIR, CONFIG_FILE, LOCAL_FILE } from './config.js';
  *
  * What may be served is decided on the machine that holds the file, after
  * resolving symlinks there: the task worktrees, the main checkout, the
- * machine's `~/.claude/plans` and Claude's scratchpad. A link inside a root
+ * machine's `~/.claude/plans`, its `~/tmp` (where sessions leave reports and
+ * PR texts) and Claude's scratchpad. A link inside a root
  * that points outside it is outside.
  */
 
@@ -279,7 +280,7 @@ export async function allowedRoots(machine) {
   // project already contributes it (`board` is the board, so it is one of them).
   const board = await filesHooks.boardRoot(m);
   const own = board && !perProject.some((p) => p && m.samePath(p, board)) ? board : null;
-  return [...new Set([...perProject, own, home ? m.path.join(home, '.claude', 'plans') : null, ...tmp])].filter(Boolean);
+  return [...new Set([...perProject, own, home ? m.path.join(home, '.claude', 'plans') : null, home ? m.path.join(home, 'tmp') : null, ...tmp])].filter(Boolean);
 }
 
 /**

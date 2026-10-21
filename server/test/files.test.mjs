@@ -109,6 +109,7 @@ before(async () => {
   write(B.repo, 'box-doc.md', '# box\n');
   write(B.tmp, 'borrador.md', '# del scratchpad del box\n');
   write(L.home, '.claude/plans/plan-x.md', '# plan\n');
+  write(L.home, 'tmp/bench-opt/prs/informe.md', '# informe\n');
   mkdirSync(L.tmp, { recursive: true });
 
   write(OUTSIDE, 'secret.md', 'fuera\n');
@@ -199,19 +200,19 @@ test('rootPlace con reglas POSIX: la barra invertida no trepa, el scratch se mir
   assert.equal(files.rootPlace(win, { main: [] }, '/tmp/claude/f.md'), null, 'la regla de /tmp no es de Windows');
 });
 
-test('allowedRoots: worktrees, checkout, plans del home y scratchpad', async () => {
+test('allowedRoots: worktrees, checkout, plans y ~/tmp del home y scratchpad', async () => {
   const roots = await files.allowedRoots(machines().local);
-  assert.deepEqual(roots, [L.wtRoot, L.repo, path.join(L.home, '.claude', 'plans'), L.tmp],
+  assert.deepEqual(roots, [L.wtRoot, L.repo, path.join(L.home, '.claude', 'plans'), path.join(L.home, 'tmp'), L.tmp],
     'the board checkout here is the project checkout: it is not listed twice');
 });
 
 test('allowedRoots: la raíz del tablero se suma solo en la máquina local', async () => {
   const board = path.join(ROOT, 'board-tree');
   await withStub(files.filesHooks, 'boardRoot', (m) => (m.kind === 'local' ? board : null), async () => {
-    assert.deepEqual(await files.allowedRoots(machines().local), [L.wtRoot, L.repo, board, path.join(L.home, '.claude', 'plans'), L.tmp]);
+    assert.deepEqual(await files.allowedRoots(machines().local), [L.wtRoot, L.repo, board, path.join(L.home, '.claude', 'plans'), path.join(L.home, 'tmp'), L.tmp]);
     const boxRoots = await files.allowedRoots(machines().box);
     assert.ok(!boxRoots.includes(board), 'a runner is not where the board runs');
-    assert.equal(boxRoots.length, 4);
+    assert.equal(boxRoots.length, 5);
   });
 });
 
@@ -298,6 +299,13 @@ test('un resolve que agota su tiempo deja al box que sí responde fuera de unrea
     assert.deepEqual(r.candidates.map((x) => x.machine), ['local']);
     assert.ok(r.tried.some((t) => t.machine === 'box' && t.cut === true && t.status === null));
   }));
+});
+
+test('~/tmp del home se abre: es donde las sesiones dejan informes y textos de PR', async () => {
+  const r = await files.resolveRef({ ref: '~/tmp/bench-opt/prs/informe.md' });
+  assert.deepEqual(r.candidates.map((x) => [x.machine, x.base, x.rel]), [['local', 'home', 'tmp/bench-opt/prs/informe.md']]);
+  const opened = await files.readAllowed({ machine: 'local', path: path.join(L.home, 'tmp', 'bench-opt', 'prs', 'informe.md') });
+  assert.ok(opened);
 });
 
 test('~/ se prueba en todas las máquinas con su home', async () => {
@@ -988,7 +996,7 @@ test('el árbol del tablero: el checkout puede ser un enlace y entrarse por otro
 
 test('allowedRoots: el checkout del tablero escrito de otra forma no se suma como otra raíz', async () => {
   await withStub(files.filesHooks, 'boardRoot', (m) => (m.kind === 'local' ? `${L.repo}${path.sep}` : null), async () => {
-    assert.deepEqual(await files.allowedRoots(machines().local), [L.wtRoot, L.repo, path.join(L.home, '.claude', 'plans'), L.tmp]);
+    assert.deepEqual(await files.allowedRoots(machines().local), [L.wtRoot, L.repo, path.join(L.home, '.claude', 'plans'), path.join(L.home, 'tmp'), L.tmp]);
   });
 });
 
