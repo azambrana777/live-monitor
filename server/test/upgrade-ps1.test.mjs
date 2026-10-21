@@ -105,6 +105,8 @@ const scenario = JSON.parse(fs.readFileSync(path.join(here, 'scenario.json'), 'u
 fs.appendFileSync(path.join(here, 'npm-calls.log'), JSON.stringify(argv) + '\\n');
 // scenario.buildExit makes \`npm run build\` fail.
 if (argv[0] === 'run') process.exit(scenario.buildExit ?? 0);
+// scenario.ciExit makes npm ci (the install start.ps1 does) fail.
+if (argv[0] === 'ci') process.exit(scenario.ciExit ?? 0);
 if (argv[0] !== 'install') process.exit(0);
 
 const n = fs.readFileSync(path.join(here, 'npm-calls.log'), 'utf8').split('\\n')
@@ -641,6 +643,62 @@ describe('upgrade.ps1 en un repo de prueba', { skip: SKIP, timeout: 1_200_000 },
     }
   });
 
+  // Someone else lands a commit on origin/main while the upgrade runs.
+  function pushToOrigin(ctx, name, edit) {
+    const other = path.join(ctx.dir, name);
+    git(ctx.dir, ctx.env, 'clone', '-q', '-b', 'main', ctx.remote, other);
+    git(other, ctx.env, 'config', 'user.name', 'Other');
+    git(other, ctx.env, 'config', 'user.email', 'other@example.invalid');
+    git(other, ctx.env, 'config', 'commit.gpgsign', 'false');
+    edit(other);
+    git(other, ctx.env, 'add', '-A');
+    git(other, ctx.env, 'commit', '-q', '-m', 'other work');
+    git(other, ctx.env, 'push', '-q', 'origin', 'main');
+  }
+
+  test('un push rechazado porque origin/main avanzó: se integra con un merge y se reintenta', async () => {
+    const ctx = await makeSandbox('pushdiverged');
+    try {
+      pushToOrigin(ctx, 'other-a', (dir) => fs.writeFileSync(path.join(dir, 'other.txt'), 'x'));
+      const { res } = await runUpgrade(ctx);
+      const job = readJob(ctx);
+      assert.equal(res.code, 0, res.output);
+      assert.equal(job.state, 'done', res.output);
+      assert.equal(stepStates(job).laptop_push, 'ok');
+      assert.equal(job.laptop.pushed, true);
+      assert.equal(job.laptop.pushError, null);
+      const head = git(ctx.repo, ctx.env, 'rev-parse', 'HEAD');
+      assert.equal(git(ctx.dir, ctx.env, '--git-dir', ctx.remote, 'rev-parse', 'main'), head);
+      assert.ok(fs.existsSync(path.join(ctx.repo, 'other.txt')), 'the other commit is now in the checkout');
+      assert.equal(git(ctx.repo, ctx.env, 'log', '-1', '--format=%P').split(' ').length, 2, 'HEAD is a merge');
+    } finally {
+      await cleanup(ctx);
+    }
+  });
+
+  test('un push rechazado cuyo merge choca: aviso claro, merge abortado y el job termina en done', async () => {
+    const ctx = await makeSandbox('pushconflict');
+    try {
+      pushToOrigin(ctx, 'other-b', (dir) => {
+        const f = path.join(dir, 'remote', 'bootstrap.sh');
+        fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('2.1.272', '9.9.9'));
+      });
+      const remoteBefore = git(ctx.dir, ctx.env, '--git-dir', ctx.remote, 'rev-parse', 'main');
+      const { res } = await runUpgrade(ctx);
+      const job = readJob(ctx);
+      assert.equal(res.code, 0, res.output);
+      assert.equal(job.state, 'done', res.output);
+      assert.equal(stepStates(job).laptop_push, 'warn');
+      assert.equal(job.laptop.pushed, false);
+      assert.match(job.laptop.pushError, /merging it did not apply cleanly \(merge aborted/);
+      assert.equal(git(ctx.dir, ctx.env, '--git-dir', ctx.remote, 'rev-parse', 'main'), remoteBefore);
+      assert.equal(job.laptop.commit, git(ctx.repo, ctx.env, 'rev-parse', 'HEAD'), 'the commit stays, no merge in progress');
+      assert.equal(git(ctx.repo, ctx.env, 'status', '--porcelain', '--', ...FILES), '');
+    } finally {
+      await cleanup(ctx);
+    }
+  });
+
   test('un push que se cuelga se corta: aviso, y el job termina en done', async () => {
     const ctx = await makeSandbox('pushhang', { pushHang: true });
     try {
@@ -953,14 +1011,14 @@ describe('upgrade.ps1 en un repo de prueba', { skip: SKIP, timeout: 1_200_000 },
     }
   });
 
-  test('si npm install falla, arranca igualmente, avisa y sale con 2', async () => {
+  test('si npm ci falla, arranca igualmente, avisa y sale con 2', async () => {
     const ctx = await makeSandbox('installfail');
     try {
       fs.rmSync(path.join(ctx.repo, 'server', 'node_modules'), { recursive: true, force: true });
-      writeJson(path.join(ctx.tools, 'scenario.json'), { binary: [true], versions: null, fakeClaude: fakeClaudeExe, exit: [1] });
+      writeJson(path.join(ctx.tools, 'scenario.json'), { binary: [true], versions: null, fakeClaude: fakeClaudeExe, ciExit: 1 });
       const r = await runPs(ctx, 'start.ps1');
       assert.equal(r.code, 2, r.output);
-      const warn = /AVISO: npm install del servidor fallo \(codigo 1\)/;
+      const warn = /AVISO: npm ci del servidor fallo \(codigo 1\)/;
       assert.match(r.output, warn);
       const lines = r.output.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
       assert.match(lines.at(-1), warn, 'el aviso es la ultima linea');
